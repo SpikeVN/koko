@@ -1,0 +1,24 @@
+[project]
+name = "koko"
+version = "0.1.0"
+description = "Cabin interpreter: speech -> LLM -> speech, on Jetson"
+readme = "README.md"
+requires-python = "==3.8.10"
+# torch/torchaudio (1.14, cuda 11.4) come from NVIDIA's Jetson wheel, NOT PyPI:
+#   uv pip install ./torch-1.14.0a0+44dac51c.nv23.01-cp38-cp38-linux_aarch64.whl
+dependencies = [
+    "httpx>=0.23,<0.27",
+    "numpy==1.24.4",
+    "matplotlib<3.8",
+    # ASR: last faster-whisper line py3.8 supports (ctranslate2-backed, no torch)
+    "faster-whisper==1.0.3",
+    "ctranslate2==4.4.0",
+    # TTS: VieNeu v3 Turbo ONNX graphs + phoneme tokenizer
+    "onnxruntime==1.19.2",
+    "tokenizers==0.20.3",
+    "soundfile==0.12.1",
+    "soxr==0.3.7",
+    # audio i/o / transport
+    "sounddevice==0.4.6",
+    "websockets==10.4",
+]
