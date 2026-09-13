@@ -1,0 +1,11 @@
+#!/usr/bin/bash
+
+# Push repo to the Jetson (./tools/pull is the opposite direction). Reuses
+# .gitignore patterns (rsync's exclude-from syntax is gitignore-compatible:
+# comments, globs, dir-slash patterns). Wheels and model weights are excluded
+# — see MODELS.md for provisioning.
+#
+# Machine-specific junk never crosses either way.
+rsync -avzP . triph@xavier:/mnt/sdcard/PhuongBase/koko \
+  --exclude-from=.gitignore --exclude=.git/ \
+  --exclude=.venv/ --exclude=.venv-laptop/ --exclude=hf_cache/

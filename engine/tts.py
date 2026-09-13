@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import queue
 import threading
 import time
@@ -61,6 +62,10 @@ class VieneuTts(TtsBackend):
         self._model_path = cfg.tts.vieneu_model_path or str(
             Path(__file__).resolve().parent.parent / "tts_model")
         self._voice = cfg.tts.vieneu_voice
+        # KOKO_TTS_GREEDY=1 -> temperature 0 (argmax path in VieneuLite._sample;
+        # deterministic output was verified byte-identical). None = engine default 0.8.
+        self._temperature = (
+            0.0 if os.getenv("KOKO_TTS_GREEDY", "") not in ("", "0") else None)
 
     def _load(self) -> None:
         if self._engine is not None:
@@ -85,7 +90,10 @@ class VieneuTts(TtsBackend):
     def _synth(self, phonemes: str) -> np.ndarray:
         with self._lock:
             self._load()
-        wav = self._engine.synth(phonemes)
+        if self._temperature is None:
+            wav = self._engine.synth(phonemes)   # engine default (temp 0.8)
+        else:
+            wav = self._engine.synth(phonemes, temperature=self._temperature)
         if wav.ndim > 1:
             wav = wav.mean(axis=-1)
         return np.asarray(wav, dtype=np.float32)

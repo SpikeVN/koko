@@ -1,10 +1,10 @@
 """Interpretation gate: decides *when* accumulated source text goes to the LLM.
 
 Standard-interpretation mode: release the buffered transcript once the
-source speaker has been speech-active for `interpretation_delay_s`
-(5s) continuously. A pause longer than `gap_reset_s` restarts the 5s
-cycle. Buffer holds text from partials *and* finals; release is a
-FINAL_TEXT-driven flush (so we hand the LLM confirmed text only).
+source speaker has accumulated `interpretation_delay_s` of speech
+(measured in AUDIO time, not event spacing). Continuous silence longer
+than `gap_reset_s` restarts the cycle. Buffer holds text from partials
+*and* finals; release gathers whatever is buffered at fire time.
 """
 
 from __future__ import annotations
@@ -27,40 +27,51 @@ class InterpretationGate:
         self.gap = cfg.gate.gap_reset_s
         self.bus = bus
         self.monitor = monitor
-        self.speech_start: float | None = None
-        self.last_voice_ts: float | None = None
-        self.fired = False
+        self.speech_secs = 0.0     # speech duration in AUDIO time this cycle
+        self.silence_secs = 0.0    # continuous silence in AUDIO time
+        self.speaking = False
+        self.flush = False         # buffer release pending at a pause boundary
         self.buffer: list[str] = []
 
-    def on_voice(self, active: bool, now: float) -> None:
-        if not active:
-            return
-        if self.last_voice_ts is not None and now - self.last_voice_ts > self.gap:
-            # real pause: start a fresh cycle
-            self.speech_start = None
-            self.fired = False
-        self.last_voice_ts = now
-        if self.speech_start is None:
-            self.speech_start = now
-            self.fired = False
+    def on_voice(self, active: bool, dur_s: float) -> None:
+        """Track speech/silence in *audio time*, not wall-clock spacing.
+
+        Measuring the distance between voice events was wrong in the
+        websocket path: a voice event only arrives once per ~1 s chunk
+        and ASR jitter stretched the spacing past gap_reset_s, so every
+        chunk looked like a fresh pause and the cycle never accumulated.
+        """
+        if active:
+            self.silence_secs = 0.0
+            self.speech_secs += dur_s
+            if not self.speaking:
+                log.debug("speech started (%.2fs audio so far)",
+                          self.speech_secs)
+        else:
+            self.silence_secs += dur_s
+            if self.silence_secs >= self.gap:
+                if self.speech_secs > 0:
+                    log.debug("silence %.2fs: new cycle", self.silence_secs)
+                self.speech_secs = 0.0
+                self.flush = True   # utterance ended: release the buffer
+        self.speaking = active
 
     def on_asr_text(self, ev: Event) -> None:
         if ev.text:
             self.buffer.append(ev.text)
 
     def maybe_fire(self, now: float) -> Event | None:
-        if (
-            not self.fired
-            and self.buffer
-            and self.speech_start is not None
-            and now - self.speech_start >= self.delay
-        ):
-            self.fired = True
+        # Fire when the burst of speech reaches interpretation_delay_s, or
+        # when a pause of gap_reset_s ends an utterance. Both counters reset
+        # after each fire, so continuous speech keeps producing translations.
+        if self.buffer and (self.speech_secs >= self.delay or self.flush):
+            self.flush = False
             text = " ".join(self.buffer).strip()
             self.buffer.clear()
+            self.speech_secs = 0.0   # restart the cycle for continuous speech
             return Event(
                 kind=Kind.SPEAK,
-                turn_id=f"u{self.speech_start:.0f}",
+                turn_id=f"u{now:.0f}",
                 text=text,
             )
         return None
@@ -74,7 +85,9 @@ class InterpretationGate:
                 ev = await _get(voice_q, stop)
                 if ev is None:
                     break
-                self.on_voice(bool(ev.payload), now=time.monotonic())
+                p = ev.payload or {}
+                self.on_voice(bool(p.get("active")),
+                              float(p.get("dur_s", 0.0)))
 
         async def text_loop():
             while not stop.is_set():

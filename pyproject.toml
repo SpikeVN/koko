@@ -1,24 +1,33 @@
 [project]
 name = "koko"
 version = "0.1.0"
-description = "Cabin interpreter: speech -> LLM -> speech, on Jetson"
+description = "Cabin interpreter: speech -> LLM -> speech. Laptop-first: ASR+TTS local, LLM remote (Jetson llama-server). For py3.8 Jetson use requirements-jetson-py38.txt."
 readme = "README.md"
-requires-python = "==3.8.10"
-# torch/torchaudio (1.14, cuda 11.4) come from NVIDIA's Jetson wheel, NOT PyPI:
-#   uv pip install ./torch-1.14.0a0+44dac51c.nv23.01-cp38-cp38-linux_aarch64.whl
+requires-python = ">=3.12"
 dependencies = [
-    "httpx>=0.23,<0.27",
-    "numpy==1.24.4",
-    "matplotlib<3.8",
-    # ASR: last faster-whisper line py3.8 supports (ctranslate2-backed, no torch)
-    "faster-whisper==1.0.3",
-    "ctranslate2==4.4.0",
-    # TTS: VieNeu v3 Turbo ONNX graphs + phoneme tokenizer
-    "onnxruntime==1.19.2",
-    "tokenizers==0.20.3",
-    "soundfile==0.12.1",
-    "soxr==0.3.7",
-    # audio i/o / transport
-    "sounddevice==0.4.6",
-    "websockets==10.4",
+    "faster-whisper>=1.2.1",
+    # "httpx>=0.23,<0.27",
+    # "numpy",
+    # # ASR: faster-whisper in-process (model auto-downloads via HF on first load)
+    # "faster-whisper>=1.2.4",
+    # # TTS: VieNeu v3 Turbo ONNX graphs + phoneme tokenizer
+    # "onnxruntime-gpu>=1.20",      # CPU-only boxes: pip install onnxruntime instead + KOKO_TTS_EP=cpu
+    # "tokenizers",
+    # # audio i/o / transport
+    # "sounddevice",
+    # "soundfile",
+    # "soxr",
+    # "websockets",
+    "httpx>=0.28.1",
+    "numpy>=2.5.3",
+    "onnxruntime-gpu>=1.30.0",
+    "sea-g2p>=0.9.1",
+    "sounddevice>=0.5.6",
+    "soundfile>=0.14.0",
+    "soxr>=1.1.0",
+    "tokenizers>=0.23.2",
+    "websockets>=17.1",
 ]
+
+[dependency-groups]
+jetson = []   # jetson/tooling-only; runtime deps pinned in requirements-jetson-py38.txt (py3.8)

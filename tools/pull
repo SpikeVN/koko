@@ -1,0 +1,13 @@
+#!/usr/bin/bash
+
+# Pull repo from the Jetson (opposite of ./tools/push). Reuses .gitignore
+# patterns (rsync's exclude-from syntax is gitignore-compatible).
+#
+# Model weights/wheels stay Jetson-only — provision on the laptop with
+# tools/fetch_models.sh instead of copying gigabytes over the wire.
+#
+# Note: since this may overwrite local files, use --dry-run to preview.
+DRY=()
+if [ "${1:-}" = "--dry-run" ]; then DRY=(--dry-run); fi
+rsync -avzP "${DRY[@]}" triph@xavier:/mnt/sdcard/PhuongBase/koko . \
+  --exclude-from=.gitignore --exclude=.git/ --exclude=hf_cache/ --exclude=.venv/

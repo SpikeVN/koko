@@ -1,116 +1,116 @@
-# koko — real-time spoken interpreter
+# koko — live interpretation over websockets
 
-Audio in → live speech-to-text → LLM interpreter (Qwen, local) → live text-to-speech out.
-The TTS starts speaking after the source speaker has been talking continuously for
-`KOKO_DELAY_S` seconds (standard interpretation style).
-
-```
-mic ─► SOURCE_CHUNK/SOURCE_SPEAKS ─► ASR ─► FINAL_TEXT ─► gate ─► SPEAK ─► LLM ─► ASSISTANT_CHUNK ─► TTS ─► speaker
-                          20ms blocks        1s chunks    buffer     5s cycle  stream      sentence queue
-```
+koko is a speech-to-speech **live interpreter**: someone speaks into your
+device, ASR transcribes them in real time, an LLM translates the running
+transcript into Vietnamese, and TTS speaks the translation — all pipelined
+so audio of the first sentence starts while the speaker is still talking.
+The server hosts the whole pipeline behind **one websocket port** (6942);
+the client just streams microphone audio up and plays TTS audio as it
+arrives. **All audio playback happens on the client** — the server sends
+synthesized PCM over the socket and never opens an output stream.
 
 ## Architecture
 
-`engine/` — every stage is a queue consumer behind one interface, so each can be
-swapped independently:
+One websocket connection per session (only one client at a time). Inside
+the server, the pipeline is a set of asyncio stages passing events over a
+shared `Bus`:
 
-| file | role |
-|---|---|
-| `engine/config.py` | all URLs, ports, model names, thresholds (env-overridable, `KOKO_*`) |
-| `engine/events.py` | typed events crossing stage boundaries |
-| `engine/bus.py` | event bus (per-subscriber queues; thread-safe put + asyncio pump) |
-| `engine/source.py` | mic capture + energy VAD → `SOURCE_CHUNK` / `SOURCE_SPEAKS` |
-| `engine/asr.py` | streaming transcription: `FasterWhisperAsr` (default) or `WhisperLiveAsr` |
-| `engine/gate.py` | **5s interpretation trigger** — accumulates ASR text, releases to LLM on the speech timer |
-| `engine/llm.py` | OpenAI-compatible streaming client, token → sentence chunking |
-| `engine/tts.py` | TTS backends (`NullTts` for dry runs, `VieneuTts`) + audio player queue |
-| `engine/pipeline.py` | wires everything, owns lifecycle & shutdown |
-| `engine/monitor.py` | latency percentiles per event |
-
-`main.py` is the entrypoint.
-
-## External services & ports (dev box)
-
-| service | URL | what runs there | quant / VRAM guide |
-|---|---|---|---|
-| LLM (vLLM, OpenAI-compatible) | `http://127.0.0.1:8000/v1` | Qwen 9B-class chat model | bf16 if ≥ 24 GB free; fp8 (Ada/Hopper) ≈ 10 GB; 4-bit AWQ/GGUF if < 10 GB |
-| WhisperLive (optional ASR server) | `ws://127.0.0.1:9090` | faster-whisper backend | prefer `large-v3-turbo` int8_float16 (~2 GB); `distil-large-v3` fp16 ≈ 2 GB |
-| diart / pyannote (speaker labels) | in-process, no port | downloaded from HF on first run | fp16 |
-| vienneu-tts | in-process via `VieneuTts` | TTS engine | vendor's own cfg; runs offline after model download |
-
-GPU budget: run Whisper + Qwen diart TTS on one 24 GB card comfortably. Whisper and diart are light
-enough to share; keep the LLM resident in vLLM with `--gpu-memory-utilization 0.35` if co-located
-with the ASR. **Do not let TTS output feed the mic** — headphones, or a separate output device per
-`KOKO_TTS_SR`.
-
-## Run
-
-```bash
-uv run python main.py                    # default config
-KOKO_DELAY_S=2 KOKO_TTS=null uv run python main.py        # faster speech cycle, no audio
-KOKO_ASR_ENGINE=whisper_live KOKO_WHISPER_LIVE_URL=ws://127.0.0.1:9090 uv run python main.py
+```
+ client mic (PCM16 16 kHz)
+        │  binary websocket frames
+        ▼
+ ┌─────────────┐   SOURCE_CHUNK / SOURCE_SPEAKS
+ │   WsFeed    │──────────────►┌─────────────┐
+ │ (20 ms→1 s  │               │  ASR stage   │  faster-whisper (in-process)
+ │  packing)   │               │  or Whisper- │  → PARTIAL_TEXT / FINAL_TEXT
+ └─────────────┘               │   Live       │
+                               └──────┬───────┘
+                                      │ transcript text
+                                      ▼
+                            ┌─────────────────────┐
+                            │ Interpretation gate │  buffers text; fires the
+                            │  (~5 s speech, 1.2 s│  LLM turn after 5 s of
+                            │  gap resets cycle)  │  continuous speech
+                            └─────────┬───────────┘
+                                      ▼
+                            ┌─────────────────────┐
+                            │     LLM stage       │  OpenAI-compatible API
+                            │  (streaming)        │  → ASSISTANT_CHUNK
+                            └─────────┬───────────┘  per sentence
+                                      ▼
+                            ┌─────────────────────┐
+                            │      TTS stage       │  VieneuLite (ONNX, 48 kHz)
+                            │                      │  → audio queue
+                            └─────────┬───────────┘
+                                      │  {"type":"audio"} + binary PCM16
+                                      ▼
+                                 client speakers
 ```
 
-## Environment knobs (subset)
+Stages and files:
 
-| var | default | meaning |
+| component | file | what it does |
 |---|---|---|
-| `KOKO_DELAY_S` | `5` | interpretation start delay (s) |
-| `KOKO_ASR_ENGINE` | `faster_whisper` | or `whisper_live` |
-| `KOKO_ASR_MODEL` | `Systran/faster-whisper-large-v3-turbo` | faster-whisper model |
-| `KOKO_LLM_BASE_URL` | `http://127.0.0.1:8000/v1` | OpenAI-compatible endpoint |
-| `KOKO_LLM_MODEL` | `Qwen/Qwen3-8B-AWQ` | chat model served there |
-| `KOKO_TTS` | `null` | `null` (dry run) or `vieneu` |
-| `KOKO_LANGUAGE` | `en` | source speech language |
+| ASR | `engine/asr.py` | streaming Whisper (in-process faster-whisper by default, or a WhisperLive server) |
+| Gate | `engine/gate.py` | decides *when* buffered transcript goes to the LLM |
+| LLM | `engine/llm.py` | streaming translation; groups tokens into sentences |
+| TTS | `engine/tts.py`, `engine/tts_vieneu.py` | VieNeu-TTS v3 Turbo via local ONNX graphs (torch-free) |
+| phonemes | `engine/phonemize.py` | remote G2P client (text → phonemes over HTTP) |
+| server | `ws_server.py` | hosts the whole pipeline on port 6942 |
+| reference client | `ws_client.py` | streams mic audio, plays returned TTS |
 
-## Production target: NVIDIA Jetson AGX Xavier 32 GB (CUDA 11.4)
+## Setup
 
-Constraints that shape this box: JetPack 5 / CUDA 11.4 / Volta (`sm_72`) / 64-bit LPDDR4x
-(~136 GB/s — the real inference bottleneck) / no official CUDA 12 stack for `sm_72`.
+1. **Get the code** and create the environment (needs Python ≥ 3.12 and [uv](https://docs.astral.sh/uv/)):
 
-### Deployment: containerized, not bare-metal
+   ```bash
+   uv sync
+   ```
 
-Building llama.cpp (and getting a sane torch stack) on Jetson is a real hassle, so the
-production plan runs **inside a container image that ships a working torch + vLLM +
-llama.cpp out of the box**. Consequences for the README advice below:
+2. **Fetch model weights** (TTS + whisper weights from the HF hub):
 
-- The "CUDA 11.4 makes vLLM impossible" reasoning above only applied to bare-metal pip
-  installs; inside a container with bundled CUDA/torch wheels that constraint is
-  lifted, and **vLLM becomes viable on Xavier** if the image's build supports `sm_72`
-  (verify with `python -c "import torch; print(torch.cuda.get_arch_list())"` → must
-  contain `7.2`).
-- Whatever server the container brings (vLLM or llama.cpp) speaks the OpenAI-compatible
-  protocol, so our code is unchanged — only `KOKO_LLM_BASE_URL` / `KOKO_LLM_MODEL`
-  flip depending on which one you run.
+   ```bash
+   tools/fetch_models.sh          # skip files already present
+   ```
 
-### Plan of record
+   See `MODELS.md` for the full list of what lands where.
 
-| stage | run as | specifics |
-|---|---|---|
-| LLM | **inside the container**: `llama-server :8000` (GGUF Q4_K_M ≈ 6–7 GB) or vLLM (AWQ/fp8) | both expose `/v1/chat/completions`; expect ~10–20 tok/s gen on Xavier's ~136 GB/s bus either way. Prefer llama.cpp if you want KV-cache-quant / flash-attn knobs; vLLM if batching multiple streams matters. |
-| ASR | faster-whisper, `compute_type=int8` | if the container brings a decent torch, try GPU-first, but Xavier CPU handles distil/turbo-int8 models fine in real time — avoid GPU contention with the LLM if vLLM is resident. |
-| VAD | RMS energy (`SOURCE_SPEAKS`) | diart/pyannote only if the container's torch actually supports `7.2`/sm_72 — otherwise skip it, the RMS VAD already drives the gate. |
-| TTS | in-process (vieneu) or CPU | keep it light; don't let it steal ASR CPU while speech is streaming. |
+3. **Configure** (or accept defaults) via env vars — everything lives in
+   `engine/config.py`, and `KOKO_*` env vars override it. The important
+   ones:
 
-**Toolchain facts:** JetPack 5 = CUDA 11.4, cuDNN 8, TensorRT 8.5. Container escape of the
-bare-metal CUDA ceiling is exactly why a Docker image "just works" where pip installs
-would fight on this hardware.
+   - `KOKO_LLM_BASE_URL` / `KOKO_LLM_MODEL` — any OpenAI-compatible server
+   - `KOKO_TTS` (`vieneu` / `null`), `KOKO_VIENEU_VOICE` — voice selection
+   - `KOKO_ASR_ENGINE` (`faster_whisper` default, or `whisper_live`)
+   - `KOKO_PHONEMIZE_URL` — phonemizer HTTP endpoint (box: `tools/phonemize_server.py`)
 
-## Interpretation semantics
+4. **Check the machine** has the weights / GPU / services:
 
-- The gate tracks speech activity. Continuous speech for `KOKO_DELAY_S` (default: 5s)
-  releases the buffer to the LLM; a >1.2s pause resets the timer for a fresh cycle.
-- While that turn is in-flight, the user can keep speaking: new text accumulates in
-  a separate turn. Barge-in is treated as a new cycle rather than pre-empting the
-  TTS (interpretation, not dialogue); revisit in `engine/gate.py`.
-- The LLM streams tokens; token buffers are flushed to TTS at sentence boundaries
-  so audio starts early.
+   ```bash
+   uv run tools/check_laptop.py     # optional sanity script
+   uv run tools/setup_laptop.sh     # optional full setup
+   ```
 
-## Roadmap / not live yet
+5. **Run:**
 
-- vienneu-tts actual engine binding (imports `vieneu` at first use; plug in `engine/tts.py`).
-- Real barge-in cancellation of an in-flight LLM stream.
-- WhisperLive client is implemented against a single-connection model of the WhisperLive
-  protocol; may need adjustments for the exact server version you run.
-- Speaker labelling via diart (repo had `voice_seperate.py`; now the VAD signals
-  SOURCE_SPEAKS come from simple RMS energy, which ignores noise from other speakers).
+   ```bash
+   uv run ws_server.py            # server: :6942
+   uv run ws_client.py            # client: mic → server → speakers
+   ```
+
+## Quick facts
+
+- Input to the server: raw mono **PCM16 @ 16 kHz** in ~20 ms binary
+  frames + JSON control messages (`hello`, `bye`).
+- Output to the client: JSON `{"type":"audio","rate":<Hz>}` before each
+  binary **PCM16 @ 48 kHz** chunk, plus live text events. Playback is the
+  client's job.
+- Full wire protocol, including how to build a client in any language:
+  see **CLIENT.md**.
+
+## Development
+
+`tools/bench_*.py` scripts benchmark LLM / TTS / audio paths.
+`engine/config.py` is the single source of truth for external facts
+(URLs, model names); ASR and TTS backend values are validated at startup —
+unknown values raise `ValueError`.

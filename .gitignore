@@ -1,13 +1,38 @@
-# Python-generated files
+# Python
 __pycache__/
 *.py[oc]
 build/
 dist/
-wheels/
-*.egg-info
+*.egg-info/
+.pytest_cache/
 
-# Virtual environments
-.venv
-tools/
+# Virtual envs & lock artifacts
+.venv/
+
+# Wheels (download via MODELS.md, not committed)
+whls/
+*.whl
+
+# Model weights — too big for git; download per MODELS.md
+# (small files in tts_model/ — config.json, tokenizer.json,
+#  voices_v3_turbo.json — ARE tracked)
+tts_model/**/*.onnx
+tts_model/*.onnx
+tts_model/**/*.data
+tts_model/**/*.npz
 onnx_update/
-tts_model/
+
+# Claude / editor / OS
+.claude/
+*.swp
+.DS_Store
+
+# Audio scratch output
+*.wav
+*.flac
+out/
+onnx_int8_int8_backup/
+tts_model/**/.cache/
+
+# Hugging Face download cache (local mirror of hf; fetch via tools/fetch_models.sh)
+hf_cache/

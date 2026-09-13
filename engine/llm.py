@@ -18,7 +18,6 @@ from engine.bus import Bus, get_or_stop as _get
 from engine.config import Config
 from engine.events import Event, Kind
 from engine.monitor import Monitor
-from engine.config import SPEAKER_PROMPT
 
 log = logging.getLogger("koko.llm")
 
@@ -28,10 +27,8 @@ _CHUNK_MAX_CHARS = 180
 
 class LlmStage:
     SYSTEM = (
-        "Bạn là một phiên dịch viên cabin. Người dùng giao cho bạn một "
-        "đoạn chép lời một người đang nói. CHỈ TRẢ LỜI lời nói của họ "
-        "dịch sang ngôn ngữ cần dịch, với cách hành văn tự nhiên, tách ra thành câu "
-        "ngắn. " + SPEAKER_PROMPT
+        "Bạn là một phiên dịch viên cabin. Dịch tiếp câu sau sao cho tự nhiên "
+        "và khớp với ngữ điệu, chỉ viết phần bổ sung thêm, không markdown."
     )
 
     def __init__(self, cfg: Config, bus: Bus, monitor: Monitor):
@@ -39,6 +36,8 @@ class LlmStage:
         self.bus = bus
         self.monitor = monitor
         self._client = httpx.AsyncClient(base_url=self.cfg.base_url, timeout=120)
+        self._last_source: str | None = None
+        self._last_out: str = ""
 
     async def run(self, stop: asyncio.Event, target_language: str = "tiếng Việt") -> None:
         q = self.bus.subscribe(Kind.SPEAK)
@@ -46,21 +45,28 @@ class LlmStage:
             ev = await _get(q, stop)
             if ev is None:
                 break
-            async for chunk in self._stream(ev.turn_id, ev.text, target_language):
-                await self.bus.publish(chunk)
+            # _stream publishes ASSISTANT_CHUNK events itself as sentences complete
+            await self._stream(ev.turn_id, ev.text, target_language)
 
     async def _stream(self, turn_id: str, text: str, target_language: str):
+        messages = [{"role": "system", "content": self.SYSTEM + f" Ngôn ngữ cần dịch đến: {target_language}."}]
+        if self._last_source is not None:
+            # feed the previous window + its translation so the model continues seamlessly
+            messages.append({"role": "user", "content": self._last_source})
+            if self._last_out:
+                messages.append({"role": "assistant", "content": self._last_out})
+        messages.append({"role": "user", "content": text})
         payload = {
             "model": self.cfg.model,
             "stream": True,
             "temperature": self.cfg.temperature,
             "max_tokens": self.cfg.max_tokens,
-            "messages": [
-                {"role": "system", "content": self.SYSTEM + f" Ngôn ngữ cần dịch đến: {target_language}."},
-                {"role": "user", "content": text},
-            ],
+            "messages": messages,
         }
+        log.info("LLM request (turn %s): %s", turn_id,
+                 json.dumps(messages, ensure_ascii=False))
         buf = ""
+        full: list[str] = []
         try:
             async with self._client.stream("POST", "/chat/completions", json=payload) as resp:
                 resp.raise_for_status()
@@ -74,12 +80,16 @@ class LlmStage:
                     if not tok:
                         continue
                     buf += tok
+                    full.append(tok)
                     if _ends_sentence(buf, _CHUNK_MAX_CHARS):
                         ch = Event(kind=Kind.ASSISTANT_CHUNK, turn_id=turn_id, text=buf.strip())
                         buf = ""
                         await self.bus.publish(ch)
             if buf.strip():
                 await self.bus.publish(Event(kind=Kind.ASSISTANT_CHUNK, turn_id=turn_id, text=buf.strip()))
+            self._last_source = text
+            self._last_out = "".join(full)
+            log.info("LLM answer (turn %s): %s", turn_id, self._last_out)
         except httpx.HTTPError as exc:
             log.exception("LLM stream failed")
             await self.bus.publish(

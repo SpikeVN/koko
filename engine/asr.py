@@ -64,7 +64,7 @@ class FasterWhisperAsr(Transcriber):
             chunk,
             language=self.language,
             beam_size=1,
-            vad_filter=True,
+            vad_filter=False,   # VAD drops every segment even on clean clips
             condition_on_previous_text=False,
             word_timestamps=False,
         )

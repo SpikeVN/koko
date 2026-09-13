@@ -3,7 +3,7 @@
 Pulls small blocks from PortAudio, packs blocks into ASR-sized chunks,
 checks an RMS energy threshold for speech, and publishes:
   SOURCE_CHUNK  -> ASR stage  (numpy waveform on `payload`)
-  SOURCE_SPEAKS -> gate       (`payload` = bool, speech active)
+  SOURCE_SPEAKS -> gate       (`payload` = {"active": bool, "dur_s": seconds})
 
 Publishes via bus.put(), which is safe from any thread; the bus pump
 fans events out to each stage's asyncio queue.
@@ -63,8 +63,10 @@ class MicSource:
                         packed = []
                         self.bus.put(Event(kind=Kind.SOURCE_CHUNK, payload=chunk))
                         db = _dbfs(chunk)
-                        self.bus.put(
-                            Event(kind=Kind.SOURCE_SPEAKS, payload=bool(db > DBFS_FLOOR))
-                        )
+                        self.bus.put(Event(
+                            kind=Kind.SOURCE_SPEAKS,
+                            payload={"active": bool(db > DBFS_FLOOR),
+                                     "dur_s": chunk.size / self.cfg.sample_rate},
+                        ))
         except Exception:
             log.exception("source crashed")

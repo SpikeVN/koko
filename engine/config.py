@@ -23,7 +23,7 @@ class AsrConfig:
     engine: str = "faster_whisper"      # or "whisper_live"
     language: str = "en"
     # faster-whisper (in-process, no server needed)
-    model_name: str = "Systran/faster-whisper-large-v3-turbo"
+    model_name: str = "deepdml/faster-whisper-large-v3-turbo-ct2"
     device: str = "cuda"
     compute_type: str = "int8_float16"
     # WhisperLive (separate server process)
@@ -32,8 +32,8 @@ class AsrConfig:
 
 @dataclass
 class LlmConfig:
-    base_url: str = "http://127.0.0.1:8081/v1"   # vLLM OpenAI-compatible
-    model: str = "Qwen/Qwen3-8B-AWQ"
+    base_url: str = "http://xavier:8081/v1"      # llama-server OpenAI-compatible
+    model: str = "Qwen3.6-35B-A3B"
     api_key: str = os.getenv("OPENAI_API_KEY_LOCAL", "dummy")
     temperature: float = 0.3
     max_tokens: int = 256
@@ -41,8 +41,8 @@ class LlmConfig:
 
 @dataclass
 class TtsConfig:
-    backend: str = "null"               # "vieneu" | "null"
-    vieneu_voice: str = ""              # preset voice name; "" = built-in default
+    backend: str = "vieneu"               # "vieneu" | "null"
+    vieneu_voice: str = "Adam"              # preset voice name; "" = built-in default
     vieneu_model_path: str = ""         # empty = repo tts_model/ dir
     vieneu_threads: int = 0             # 0 = auto (cores/2, capped at 8)
     output_device: int | None = None    # None = system default output
@@ -101,4 +101,4 @@ def load_config() -> Config:
     return cfg
 
 
-SPEAKER_PROMPT = "Không thêm đánh dấu người nói, hoạt động trên màn hình, hay mã markdown."
+SPEAKER_PROMPT = "Không thêm đánh dấu người nói, hoạt động trên màn hình, hay mã markdown. Dịch theo cách tiếp tục câu nói đã dịch từ trước."
