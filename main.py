@@ -1,9 +1,9 @@
-"""CLI: run the interpreter pipeline.
+"""CLI: run the interpreter pipeline (local, non-websocket).
 
-  uv run python main.py                  # default: 5s interpretation delay
-  KOKO_DELAY_S=2 KOKO_TTS=vieneu uv run python main.py
+  uv run python main.py                  # default: release_words gate
 
-All knobs are in engine/config.py or environment variables (KOKO_*).
+All knobs live in config.toml (loaded by engine/config.load_config); there
+are no environment variables. Edit config.toml or pass a per-machine file.
 """
 
 import logging

@@ -79,15 +79,16 @@ def _load_cuda_libs() -> bool:
     return all(found.values())
 
 
-def _providers() -> "tuple[str, ...]":
-    """EP choice: KOKO_TTS_EP=auto|cuda|cpu (auto = CUDA if usable)."""
-    import os
-    mode = os.getenv("KOKO_TTS_EP", "auto").lower()
+def _providers(mode: str = "auto") -> "tuple[str, ...]":
+    """EP choice: auto|cuda|cpu (auto = CUDA if usable).
+
+    `mode` comes from `tts.execution_provider` in config.toml."""
+    mode = (mode or "auto").lower()
     if mode == "cpu":
         return ("CPUExecutionProvider",)
     cuda_ok = _load_cuda_libs()
     if mode == "cuda" and not cuda_ok:
-        raise RuntimeError("KOKO_TTS_EP=cuda but CUDA libs failed to load")
+        raise RuntimeError("execution_provider=cuda but CUDA libs failed to load")
     if cuda_ok:
         return ("CUDAExecutionProvider", "CPUExecutionProvider")
     return ("CPUExecutionProvider",)
@@ -148,7 +149,8 @@ class VieneuLite:
 
     SAMPLE_RATE = 48_000
 
-    def __init__(self, model_dir: str, voice: str = "", threads: int = 0):
+    def __init__(self, model_dir: str, voice: str = "", threads: int = 0,
+                 execution_provider: str = "auto", voices_path: str = ""):
         global ORT
         import onnxruntime as ort  # noqa: N813
         from tokenizers import Tokenizer
@@ -210,7 +212,7 @@ class VieneuLite:
             intra = min(max((os_cpu() or 8) // 2, 1), 8)
         so.intra_op_num_threads = intra
         self.ort_intra_op_threads = intra
-        prov = list(_providers())
+        prov = list(_providers(execution_provider))
 
         def _sess(path, p, o=None):
             log.debug("loading ONNX %s", path.name)
@@ -248,7 +250,9 @@ class VieneuLite:
             log.debug("streaming codec unavailable, infer_stream will fall back")
 
         # -- preset voices ----------------------------------------------------
-        voices_p = base / "voices_v3_turbo.json"
+        voices_p = Path(voices_path).expanduser() if voices_path else (
+            base / "voices_v3_turbo.json")
+        self.voices_path = voices_p
         self.presets = {}
         self.default_voice = None
         if voices_p.is_file():

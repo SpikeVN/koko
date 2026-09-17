@@ -1,10 +1,16 @@
 """Interpretation gate: decides *when* accumulated source text goes to the LLM.
 
-Standard-interpretation mode: release the buffered transcript once the
-source speaker has accumulated `interpretation_delay_s` of speech
-(measured in AUDIO time, not event spacing). Continuous silence longer
-than `gap_reset_s` restarts the cycle. Buffer holds text from partials
-*and* finals; release gathers whatever is buffered at fire time.
+Releases the buffered transcript on EITHER trigger:
+
+* enough words accumulated — once the buffered source reaches
+  `gate.release_words` (e.g. 5), a burst is sent to the LLM; or
+* a pause — continuous silence longer than `gate.gap_reset_s`
+  while anything is buffered ends the utterance and releases early.
+
+Word counting uses `.split()` for space-delimited languages. For Japanese,
+Chinese, and Korean, script characters are counted instead because those
+languages commonly do not put spaces between words. Buffer holds text from
+finals; release gathers whatever is buffered at fire time and clears it.
 """
 
 from __future__ import annotations
@@ -21,39 +27,39 @@ from engine.monitor import Monitor
 log = logging.getLogger("koko.gate")
 
 
+def _is_cjk(ch: str) -> bool:
+    code = ord(ch)
+    return (
+        0x2E80 <= code <= 0x2FFF       # CJK radicals and symbols
+        or 0x3000 <= code <= 0x30FF   # Japanese kana and punctuation
+        or 0x3400 <= code <= 0x9FFF   # CJK ideographs
+        or 0xAC00 <= code <= 0xD7AF   # Hangul syllables
+        or 0xF900 <= code <= 0xFAFF   # CJK compatibility ideographs
+    )
+
+
 class InterpretationGate:
     def __init__(self, cfg: Config, bus: Bus, monitor: Monitor):
-        self.delay = cfg.gate.interpretation_delay_s
+        self.release_words = max(1, cfg.gate.release_words)
         self.gap = cfg.gate.gap_reset_s
         self.bus = bus
         self.monitor = monitor
-        self.speech_secs = 0.0     # speech duration in AUDIO time this cycle
         self.silence_secs = 0.0    # continuous silence in AUDIO time
         self.speaking = False
-        self.flush = False         # buffer release pending at a pause boundary
         self.buffer: list[str] = []
 
     def on_voice(self, active: bool, dur_s: float) -> None:
         """Track speech/silence in *audio time*, not wall-clock spacing.
 
-        Measuring the distance between voice events was wrong in the
-        websocket path: a voice event only arrives once per ~1 s chunk
-        and ASR jitter stretched the spacing past gap_reset_s, so every
-        chunk looked like a fresh pause and the cycle never accumulated.
+        A voice event arrives once per ASR chunk; measuring wall-clock
+        distance between them looked like a fresh pause every chunk, so the
+        cycle never accumulated. Accumulating `dur_s` (audio time) instead
+        makes a real long pause trigger the early flush.
         """
         if active:
             self.silence_secs = 0.0
-            self.speech_secs += dur_s
-            if not self.speaking:
-                log.debug("speech started (%.2fs audio so far)",
-                          self.speech_secs)
         else:
             self.silence_secs += dur_s
-            if self.silence_secs >= self.gap:
-                if self.speech_secs > 0:
-                    log.debug("silence %.2fs: new cycle", self.silence_secs)
-                self.speech_secs = 0.0
-                self.flush = True   # utterance ended: release the buffer
         self.speaking = active
 
     def on_asr_text(self, ev: Event) -> None:
@@ -61,14 +67,22 @@ class InterpretationGate:
             self.buffer.append(ev.text)
 
     def maybe_fire(self, now: float) -> Event | None:
-        # Fire when the burst of speech reaches interpretation_delay_s, or
-        # when a pause of gap_reset_s ends an utterance. Both counters reset
-        # after each fire, so continuous speech keeps producing translations.
-        if self.buffer and (self.speech_secs >= self.delay or self.flush):
-            self.flush = False
-            text = " ".join(self.buffer).strip()
+        """Return a SPEAK event if the buffer should go to the LLM now.
+
+        Fires when the buffered word/script-character count reaches
+        `release_words`, or when the speaker has paused (`silence_secs >= gap`)
+        with a non-empty buffer. Either way the buffer is cleared, so
+        continuous speech keeps producing translation bursts. Returns None
+        when there's nothing to say.
+        """
+        if not self.buffer:
+            return None
+        text = " ".join(self.buffer).strip()
+        cjk_chars = sum(_is_cjk(ch) for ch in text)
+        units = cjk_chars if cjk_chars else len(text.split())
+        if self.silence_secs >= self.gap or units >= self.release_words:
             self.buffer.clear()
-            self.speech_secs = 0.0   # restart the cycle for continuous speech
+            self.silence_secs = 0.0
             return Event(
                 kind=Kind.SPEAK,
                 turn_id=f"u{now:.0f}",
@@ -78,7 +92,10 @@ class InterpretationGate:
 
     async def run(self, stop: asyncio.Event) -> None:
         voice_q = self.bus.subscribe(Kind.SOURCE_SPEAKS)
-        text_q = self.bus.subscribe(Kind.PARTIAL_TEXT, Kind.FINAL_TEXT)
+        # NOTE: only FINAL_TEXT drives the release count. Live PARTIAL_TEXT is
+        # streamed to the client for instant display but deliberately ignored
+        # here, so the LLM is never fed cut-off, in-progress speech.
+        text_q = self.bus.subscribe(Kind.FINAL_TEXT)
 
         async def voice_loop():
             while not stop.is_set():
@@ -88,6 +105,9 @@ class InterpretationGate:
                 p = ev.payload or {}
                 self.on_voice(bool(p.get("active")),
                               float(p.get("dur_s", 0.0)))
+                fire = self.maybe_fire(time.monotonic())
+                if fire is not None:
+                    await self.bus.publish(fire)
 
         async def text_loop():
             while not stop.is_set():

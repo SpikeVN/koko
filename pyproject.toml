@@ -5,27 +5,18 @@ description = "Cabin interpreter: speech -> LLM -> speech. Laptop-first: ASR+TTS
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "faster-whisper>=1.2.1",
-    # "httpx>=0.23,<0.27",
-    # "numpy",
-    # # ASR: faster-whisper in-process (model auto-downloads via HF on first load)
-    # "faster-whisper>=1.2.4",
-    # # TTS: VieNeu v3 Turbo ONNX graphs + phoneme tokenizer
-    # "onnxruntime-gpu>=1.20",      # CPU-only boxes: pip install onnxruntime instead + KOKO_TTS_EP=cpu
-    # "tokenizers",
-    # # audio i/o / transport
-    # "sounddevice",
-    # "soundfile",
-    # "soxr",
-    # "websockets",
+    "fastapi>=0.141.1",
     "httpx>=0.28.1",
     "numpy>=2.5.3",
     "onnxruntime-gpu>=1.30.0",
+    "proc-tap>=1.1.1",
     "sea-g2p>=0.9.1",
     "sounddevice>=0.5.6",
     "soundfile>=0.14.0",
     "soxr>=1.1.0",
-    "tokenizers>=0.23.2",
+    "textual>=8.2.8",
+    "tokenizers>=0.22,<0.24",
+    "uvicorn>=0.53.0",
     "websockets>=17.1",
 ]
 

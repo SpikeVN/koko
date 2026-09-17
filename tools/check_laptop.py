@@ -29,9 +29,27 @@ def check(name, fn):
 
 
 def asr():
-    from faster_whisper import WhisperModel
-    import faster_whisper
-    return faster_whisper.__version__ + " (model auto-downloads on first use)"
+    from engine.asr import WhisperLiveAsr
+    from engine.config import load_config
+    import asyncio
+    import numpy as np
+
+    cfg = load_config()
+    transcriber = WhisperLiveAsr(cfg)
+
+    async def _check():
+        # One silent block drives the real path: connect -> handshake ->
+        # expect SERVER_READY -> send -> drain. A failed handshake raises
+        # loudly inside transcribe(), which surfaces as a FAIL below.
+        silence = np.zeros(
+            int(cfg.source.sample_rate * cfg.source.whisper_chunk_s),
+            dtype=np.float32)
+        return await transcriber.transcribe(silence)
+
+    _, lang = asyncio.run(_check())
+    a = cfg.asr
+    return (f"handshake OK ({a.whisper_live_url}, model={a.whisper_live_model}, "
+            f"lang={lang})")
 
 
 def phonemize():
@@ -68,11 +86,12 @@ def tts_stream():
     return f"{sum(len(c) for c in chunks) / eng.SAMPLE_RATE:.2f}s in {len(chunks)} chunks"
 
 
-check("faster-whisper", asr)
+check("whisper-live :9090", asr)
 check("phonemize :8788", phonemize)
 check("vieneu synth", tts)
 check("vieneu synth_stream", tts_stream)
 
 print()
-print("ALL OK — run main.py with KOKO_TTS=vieneu" if ok else "SOME CHECKS FAILED")
+print("ALL OK — models ready; see config.toml and run main.py"
+      if ok else "SOME CHECKS FAILED")
 sys.exit(0 if ok else 1)

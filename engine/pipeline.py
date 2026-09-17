@@ -22,24 +22,25 @@ from engine.bus import Bus
 from engine.config import Config
 from engine.monitor import Monitor
 from engine.source import MicSource
-from engine.asr import AsrStage, FasterWhisperAsr, WhisperLiveAsr
+from engine.asr import AsrStage, WhisperLiveAsr
 from engine.gate import InterpretationGate
 from engine.llm import LlmStage
-from engine.tts import AudioPlayer, NullTts, TtsStage, VieneuTts
+from engine.tts import AudioPlayer, GwenTts, NullTts, TtsStage, VieneuTts
 
 log = logging.getLogger("koko.pipeline")
 
 
 def build_transcriber_and_backend(cfg: Config):
-    if cfg.asr.engine == "whisper_live":
-        transcriber = WhisperLiveAsr(cfg)
-    else:
-        transcriber = FasterWhisperAsr(cfg)
+    transcriber = WhisperLiveAsr(cfg)
 
     if cfg.tts.backend == "vieneu":
         backend = VieneuTts(cfg)
-    else:
+    elif cfg.tts.backend == "gwen":
+        backend = GwenTts(cfg)
+    elif cfg.tts.backend == "null":
         backend = NullTts()
+    else:
+        raise ValueError(f"unknown tts backend {cfg.tts.backend!r}")
     return transcriber, backend
 
 

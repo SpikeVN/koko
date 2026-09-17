@@ -58,14 +58,15 @@ tools/fetch_models.sh --force    # re-download everything
 - `tts_model/voices_v3_turbo.json` (~160 KB) is **committed** — no download.
 - Phonemization is remote (sea-g2p has no cp38 wheel — the py310 aarch64 wheel
   is archived at `/mnt/sdcard/PhuongBase/downloads/seag2p/`): the server URL
-  is configured via `PhonemizeConfig` in `engine/config.py`. Ensure the LLM
-  host exposes the phonemize endpoint before first synth.
+  is configured via the `[phonemize]` section of `config.toml`. Ensure the
+  LLM host exposes the phonemize endpoint before first synth.
 
 ## Quick sanity after provisioning
 
 ```bash
 .venv/bin/python tools/bench_tts.py
 # expect (isolation, MAXN): backbone ~17 ms/frame, acoustic+numpy ~33,
-# loop RTF ~1.2-1.3; with KOKO_TTS_GREEDY=1 bit lower. Full pipeline RTF
-# (incl. codec decode via thread) ~0.65-0.83 depending on box load.
+# loop RTF ~1.2-1.3; with `tts.greedy = true` in config.toml a bit lower.
+# Full pipeline RTF (incl. codec decode via thread) ~0.65-0.83 depending on
+# box load.
 ```

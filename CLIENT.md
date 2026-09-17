@@ -9,7 +9,7 @@ microphone audio, JSON frames are control.
 
 - **Client → server**: raw mono PCM16 microphone audio (16 kHz, ~20 ms
   per frame). No headers, no encoding envelope — the bytes ARE the audio.
-- **Client → server (control)**: `hello` / `bye` JSON frames.
+- **Client → server (control)**: `hello` / `asr_language` / `asr_auto_detect` / `tts_voice` / `bye` JSON frames.
 - **Server → client**: TTS output as binary PCM16 frames (48 kHz), each
   preceded by a JSON `{"type": "audio", "rate": <Hz>}` header — **the
   client decodes and plays these locally**. The server does not play
@@ -35,13 +35,19 @@ microphone audio, JSON frames are control.
 |---|---|---|
 | *binary* | mono PCM16 LE @ 16 kHz | ~20 ms mic chunks, streamed continuously |
 | `hello` | `{"type": "hello", "language": "en"}` | announces client; `language` sets ASR source language (default `en`) |
+| `asr_language` | `{"type": "asr_language", "language": "vi"}` | switch WhisperLive's language for the active session; it reconnects on the next active audio block |
+| `asr_auto_detect` | `{"type": "asr_auto_detect", "enabled": true}` | enable or disable Whisper language detection for the active session; disabled by default |
+| `tts_voice` | `{"type": "tts_voice", "voice": "Adam"}` | switch the active VieNeu preset for later speech; the selected name must be in `ready.tts_voices` |
 | `bye` | `{"type": "bye"}` | clean disconnect from server side |
 
 ### Server → client
 
 | Type | Fields | Meaning |
 |---|---|---|
-| `ready` | — | session is live; safe to start streaming |
+| `ready` | `asr_language`, `asr_auto_detect`, `tts_voices`, `tts_voice` (VieNeu only) | session is live; safe to start streaming. The first ready message lists the active ASR mode and selectable `[name, description]` presets. |
+| `tts_voice` | `voice` | confirms that subsequent VieNeu audio uses this preset |
+| `asr_language` | `language` | confirms the active WhisperLive language |
+| `asr_auto_detect` | `enabled` | confirms Whisper automatic language detection |
 | `error` | `detail` | server refused (`server busy`) or a stage crashed |
 | `audio` | `rate` (e.g. `48000`) | **announcement**: binary frames which follow immediately encoded mono PCM16 |
 | `partial` | `text` | temporary ASR guess for the current speech cycle |

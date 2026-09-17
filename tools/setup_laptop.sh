@@ -2,7 +2,7 @@
 # koko — one-command workstation setup (x86_64, CUDA, Python >= 3.10).
 #
 # Installs deps, provisions TTS models, and self-checks ASR + TTS + phonemize.
-# The LLM stays remote: set KOKO_LLM_BASE_URL=http://xavier:8081/v1
+# The LLM stays remote: set [llm] base_url/model in config.toml
 # (llama-server with Qwen is the only thing left on the Jetson).
 #
 # Usage: tools/setup_laptop.sh [--python 3.11]
@@ -44,9 +44,9 @@ cat <<'EOF'
   # terminal 1 — phonemize endpoint (needs sea-g2p; auto-installed above)
   .venv-laptop/bin/python tools/phonemize_server.py
 
-  # terminal 2 — the interpreter (Jetson llama-server for the LLM)
-  KOKO_TTS=vieneu \
-  KOKO_LLM_BASE_URL=http://<jetson-ip>:8081/v1 \
-  KOKO_LLM_MODEL=Qwen3.6-35B-A3B \
+  # terminal 2 — the interpreter (Jetson llama-server for the LLM).
+  # First point config.toml's [llm] at your Jetson:
+  #   base_url = "http://<jetson-ip>:8081/v1"
+  #   model    = "Qwen3.6-35B-A3B"
   .venv-laptop/bin/python main.py
 EOF

@@ -1,0 +1,162 @@
+# koko — pipeline configuration (single source of truth for external facts).
+#
+# Loaded once at startup by engine/config.py via the stdlib `tomllib` loader.
+# Every runtime knob that used to be a KOKO_* / OPENAI_* env var now lives
+# here. The loader validates the file strictly:
+#   * the file must exist  (fail loudly if missing)
+#   * unknown sections/keys are rejected  (catches typos like `vietneu`)
+#   * wrong value types are rejected  (e.g. a float in an int field)
+# Run per-machine with a different file:
+#   uv run ws_server.py --config /path/to/machine.toml
+#
+# Omitted keys fall back to the defaults shown here. `device`-style optional
+# integers (None = system default) are simply left out to mean "auto".
+
+[source]
+# --- Microphone / inbound feed -------------------------------------------
+# PCM sample rate the client streams up at (Hz). The reference client sends
+# raw mono PCM16; keep this at 16000.
+sample_rate = 16000
+
+# Size of each audio block handed to WhisperLive, in seconds. The upstream
+# WhisperLive client uses 4,096 samples (256 ms at 16 kHz); matching that
+# cadence keeps partial captions responsive. Silence below -45 dBFS is still
+# dropped before it reaches Whisper, which otherwise hallucinates on silence.
+whisper_chunk_s = 0.25
+
+# PortAudio input device index; omit (None) to use the system default.
+# device = null   # (key left out on purpose: None = default)
+
+[asr]
+# --- Speech recognition engine -------------------------------------------
+# WhisperLive is the only ASR engine (the in-process faster-whisper backend
+# was removed). It talks to a separate WhisperLive server process (see
+# whisper-live.sh) via `whisper_live_url`.
+
+# Source language for ASR (ISO-639-1 / whisper codes).
+language = "en"
+# Keep false to use `language`. The UI can enable one-session Whisper
+# auto-detection without changing this configured manual default.
+auto_detect_language = false
+
+# Websocket URL of a running WhisperLive legacy server. The transcribe path
+# auto-reconnects if the connection drops and re-sends on the next chunk.
+whisper_live_url = "ws://127.0.0.1:9090"
+
+# Preconverted CTranslate2 model the server loads once and shares across
+# websocket sessions. A stock model name would force a fresh load on each
+# session, delaying the first caption while captured audio queues up.
+whisper_live_model = "deepdml/faster-whisper-large-v3-turbo-ct2"
+
+# Koko drops digital silence below -45 dBFS before forwarding audio; the
+# server VAD then removes non-speech within active browser/media audio before
+# Whisper decodes it.
+whisper_live_vad = true
+
+# WhisperLive promotes a provisional segment only after it repeats unchanged
+# more than this many times. Five repeats is the latency/stability midpoint:
+# lower values lock in unfinished hypotheses; the upstream default is 10.
+whisper_live_same_output_threshold = 5
+
+# --- whisper_live_server.py process knobs (no CLI switches) ---------------
+# These configure how the ASR server is launched by ./whisper-live.sh; they
+# live here so every ASR fact — client and server — has one source of truth.
+
+# Host/port the WhisperLive server binds.
+whisper_live_host = "0.0.0.0"
+whisper_live_port = 9090
+
+# Inference backend: "faster_whisper" (the stock, GPU-friendly default;
+# "tensorrt" / "openvino" are the library's alternatives).
+whisper_live_backend = "faster_whisper"
+
+# Max simultaneous clients and per-connection lifetime (s). The server
+# closes a client connection after the lifetime, so the client reconnects.
+whisper_live_max_clients = 4
+whisper_live_max_connection_s = 600
+
+[gate]
+# --- When buffered transcript is released to the LLM ----------------------
+# Release a translation burst to the LLM after this many accumulated source
+# words (or CJK script characters), unless the speaker pauses first. Eight
+# units retains enough context while finalized ASR text can still arrive promptly.
+# A silence gap still releases short utterances early.
+release_words = 8
+
+# Continuous silence (in audio seconds) longer than this, with text buffered,
+# ends the utterance and releases the buffer early. Shorter = snappier turns,
+# but too short makes the gate fire mid-thought over short pauses.
+gap_reset_s = 1.2
+
+[llm]
+# --- Translation LLM (OpenAI-compatible endpoint) -------------------------
+# Base URL of an OpenAI-compatible /v1 server (llama-server / vLLM / ollama
+# shim). This is the fact you most often change per machine ('xavier' is one
+# box's hostname) — point it at your LLM host via this file or --config.
+base_url = "http://xavier:8081/v1"
+# Model name served by that endpoint.
+model = "Qwen3.6-35B-A3B"
+# API key, if the endpoint demands one. llama-server ignores it; a dummy is
+# the safe default.
+api_key = "dummy"
+# Sampling temperature (0.0..2.0). Lower = more deterministic.
+temperature = 0.3
+# Max tokens per translation turn. ~256 covers a several-word burst fine.
+max_tokens = 256
+
+[tts]
+# --- Text-to-speech backend ------------------------------------------------
+# "vieneu" | "gwen" | "null". Unknown values raise ValueError at startup.
+backend = "vieneu"
+
+# Preset voice name; exact (accented) string from the configured voice file's
+# `presets`. "" = that file's default_voice.
+vieneu_voice = "Minh Quân Pro"
+
+# Path to the tts_model dir; empty = the repo's tts_model/ dir.
+vieneu_model_path = ""
+
+# Preset-voice JSON. Empty uses tts_model/voices_v3_turbo.json. Set this to
+# another compatible file, e.g. "tts_model/more_voices.json".
+vieneu_voices_path = "tts_model/more_voices.json"
+
+# ONNX intra-op threads for TTS; 0 = auto (cores/2, capped at 8).
+vieneu_threads = 0
+
+# PortAudio output device index; omit (None) = system default output.
+# output_device = null   # (key left out on purpose)
+
+# VieNeu v3 Turbo emits 48 kHz audio. Gwen publishes its returned 24 kHz rate.
+sample_rate = 48000
+
+# Deterministic TTS: force temperature 0 (argmax sampling path). Byte-identical
+# output verified for the greedy path. Default false (sampled, temp 0.8).
+greedy = false
+
+# ONNX execution provider for the TTS graphs: "auto" | "cuda" | "cpu".
+# auto = CUDA if the runtime libs load, else CPU. "cuda" fails loudly if CUDA
+# can't load; "cpu" forces CPU.
+execution_provider = "auto"
+
+# Gwen-TTS (Qwen3-TTS, GPU/torch) is installed separately with
+# `uv sync --group gwen`. Change `backend` to "gwen" to use it.
+gwen_model_path = "hf_cache/gwen-tts-0.6B"
+gwen_device = "cuda:0"
+gwen_dtype = "bfloat16"
+# "auto" uses FlashAttention 2 if installed, otherwise PyTorch SDPA.
+gwen_attention = "auto"
+gwen_language = "Vietnamese"
+
+# To use a bundled Gwen speaker, clone ggroup-ai-lab/gwen-tts and point this
+# at its data/ directory. Alternatively leave it empty and set both custom
+# reference fields below.
+gwen_data_path = "hf_cache/gwen-tts-0.6B/data"
+gwen_speaker = "yen_nhi"
+# gwen_ref_audio = "/path/to/reference.wav"
+# gwen_ref_text = "Transcript of the reference audio"
+
+[phonemize]
+# --- G2P endpoint (text -> phonemes) ---------------------------------------
+# HTTP POST endpoint of engine/../tools/phonemize_server.py (sea-g2p's Rust
+# core only runs server-side). Usually colocated with the LLM host.
+url = "http://127.0.0.1:8788/phonemize"

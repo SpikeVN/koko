@@ -12,26 +12,28 @@ time). Protocol on a single socket:
     {"type":"speak","text":...}              text being interpreted
     {"type":"ready"} / {"type":"error","detail":...}
 
-Run:  python ws_server.py
+Run:  python ws_server.py [--config ./config.toml]
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import logging
+import time
 
 import numpy as np
 import websockets
 
-from engine.asr import AsrStage, FasterWhisperAsr, WhisperLiveAsr
+from engine.asr import AsrStage, WhisperLiveAsr
 from engine.bus import Bus
 from engine.config import load_config
 from engine.events import Event, Kind
 from engine.gate import InterpretationGate
 from engine.llm import LlmStage
 from engine.monitor import Monitor
-from engine.tts import NullTts, VieneuTts
+from engine.tts import GwenTts, NullTts, VieneuTts
 from engine.tts import TtsStage
 
 log = logging.getLogger("koko.ws_server")
@@ -45,10 +47,9 @@ DBFS_FLOOR = -45.0
 class WsFeed:
     """Converts inbound PCM16 frames to bus events (mirrors MicSource).
 
-    The client sends ~20 ms frames; whisper needs ~1 s blocks here, so
-    frames are packed into whisper_chunk_s-sized chunks before they hit
-    the bus. Without the packing, each sliver gets transcribed on its
-    own and the VAD filters every one of them to zero text."""
+    The client sends ~20 ms frames; they are packed into 250 ms blocks for
+    WhisperLive. This matches its reference client (4,096 samples) while
+    avoiding a websocket call per tiny capture frame."""
 
     def __init__(self, cfg, bus: Bus):
         self.bus = bus
@@ -75,26 +76,37 @@ class WsFeed:
 class WsServer:
     """Holds the long-lived model handles; one pipeline per connection."""
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, event_sink=None):
         self.cfg = cfg
         self.busy = asyncio.Lock()
         self.transcriber = None
         self.backend = None
+        self.tts_voices: list[tuple[str, str]] = []
+        # optional UI hook: called with each (kind, text) as the pipeline
+        # produces them, so a textual frontend can render live state.
+        self.event_sink = event_sink
+        # live registry of connected clients: websocket -> status dict. The
+        # TUI reads this to let the operator pick a client and watch it.
+        self.clients: dict = {}
 
     async def _load_models(self) -> None:
-        cfg = self.cfg = load_config()
+        cfg = self.cfg                      # already loaded from config.toml
         log.info("loading models (ASR + TTS)...")
-        asr_engines = ("whisper_live", "faster_whisper")
-        if cfg.asr.engine not in asr_engines:
-            raise ValueError("unknown asr engine %r; expected one of %s"
-                             % (cfg.asr.engine, ", ".join(asr_engines)))
-        self.transcriber = (WhisperLiveAsr(cfg) if cfg.asr.engine == "whisper_live"
-                            else FasterWhisperAsr(cfg))
-        tts_backends = ("vieneu", "null")
+        # WhisperLive is the only ASR engine; TTS backend is still validated
+        # so a config typo fails loudly instead of silently falling back.
+        self.transcriber = WhisperLiveAsr(cfg)
+        await self.transcriber.warmup()
+        tts_backends = ("vieneu", "gwen", "null")
         if cfg.tts.backend not in tts_backends:
             raise ValueError("unknown tts backend %r; expected one of %s"
                              % (cfg.tts.backend, ", ".join(tts_backends)))
-        self.backend = VieneuTts(cfg) if cfg.tts.backend == "vieneu" else NullTts()
+        if cfg.tts.backend == "vieneu":
+            self.backend = VieneuTts(cfg)
+            self.tts_voices = self.backend.list_voices()
+        elif cfg.tts.backend == "gwen":
+            self.backend = GwenTts(cfg)
+        else:
+            self.backend = NullTts()
         log.info("models ready")
 
     async def _close_models(self) -> None:
@@ -103,29 +115,74 @@ class WsServer:
         if self.transcriber is not None:
             await self.transcriber.close()
 
-    async def start(self) -> None:
+    async def serve(self) -> None:
+        """Load models, serve websocket connections until cancelled."""
         await self._load_models()
+        server = await websockets.serve(self._wrapped, HOST, PORT, max_size=None)
+        log.info("koko tts-server listening on %s:%d", HOST, PORT)
         try:
-            async with websockets.serve(self._wrapped, HOST, PORT, max_size=None):
-                log.info("koko tts-server listening on %s:%d", HOST, PORT)
-                await asyncio.get_running_loop().create_future()  # serve forever
+            await asyncio.get_running_loop().create_future()  # serve forever
         finally:
+            server.close()
+            await server.wait_closed()
             await self._close_models()
+
+    def start(self) -> None:
+        """Blocking entry point for the headless server."""
+        try:
+            asyncio.run(self.serve())
+        except KeyboardInterrupt:
+            pass
 
     # ---- plumbing per connection ----
     async def _wrapped(self, ws) -> None:
         if self.busy.locked():
             await self._ctl(ws, {"type": "error", "detail": "server busy"})
             return
-        async with self.busy:
-            try:
-                await self._session(ws)
-            except Exception:
-                log.exception("session crashed")
+        self._register_client(ws)
+        try:
+            async with self.busy:
                 try:
-                    await self._ctl(ws, {"type": "error", "detail": "server error"})
+                    await self._session(ws)
                 except Exception:
-                    pass
+                    log.exception("session crashed")
+                    try:
+                        await self._ctl(ws, {"type": "error", "detail": "server error"})
+                    except Exception:
+                        pass
+        finally:
+            self.clients.pop(ws, None)
+
+    def _register_client(self, ws) -> None:
+        self.clients[ws] = {
+            "addr": str(ws.remote_address),
+            "connected_at": time.monotonic(),
+            "language": self.cfg.asr.language,
+            "bytes_rx": 0,
+            "frames_rx": 0,
+            "speaking": False,
+            "last": "connected",
+            "last_at": time.monotonic(),
+        }
+
+    def _bump_client(self, ws, ev: Event) -> None:
+        """Refresh a client's live status from a bus event."""
+        info = self.clients.get(ws)
+        if info is None:
+            return
+        info["last_at"] = time.monotonic()
+        k, text = ev.kind, ev.text
+        if k is Kind.SOURCE_SPEAKS:
+            info["speaking"] = bool(
+                ev.payload.get("active")) if isinstance(ev.payload, dict) else False
+        elif k is Kind.PARTIAL_TEXT and text:
+            info["last"] = f"hearing: {text}"
+        elif k is Kind.FINAL_TEXT and text:
+            info["last"] = f"heard: {text}"
+        elif k is Kind.SPEAK and text:
+            info["last"] = f"translating: {text}"
+        elif k is Kind.ASSISTANT_CHUNK and text:
+            info["last"] = f"translated: {text}"
 
     async def _ctl(self, ws, obj: dict) -> None:
         try:
@@ -180,24 +237,74 @@ class WsServer:
                                   else None))
         out_task = asyncio.create_task(self._drain_out(ws, out_q, stop), name="out")
         text_task = asyncio.create_task(self._forward_texts(bus, ws, stop), name="text")
+        ui_task = (asyncio.create_task(self._forward_ui(bus, stop, ws), name="ui-fwd")
+                   if self.event_sink is not None else None)
         try:
-            await self._ctl(ws, {"type": "ready"})
             async for msg in ws:
                 if isinstance(msg, bytes):
+                    info = self.clients.get(ws)
+                    if info is not None:
+                        info["bytes_rx"] += len(msg)
+                        info["frames_rx"] += 1
                     if out_q.qsize() < 192:  # downstream slower than capture: drop
                         await feed.feed(msg)
                     continue
                 ctl = json.loads(msg)
                 if ctl.get("type") == "hello":
                     cfg.asr.language = ctl.get("language", cfg.asr.language)
-                    await self._ctl(ws, {"type": "ready"})
+                    auto_detect = ctl.get("asr_auto_detect", cfg.asr.auto_detect_language)
+                    if isinstance(auto_detect, bool):
+                        cfg.asr.auto_detect_language = auto_detect
+                    info = self.clients.get(ws)
+                    if info is not None:
+                        info["language"] = cfg.asr.language
+                    await self._ctl(ws, {
+                        "type": "ready",
+                        "tts_voices": self.tts_voices,
+                        "tts_voice": getattr(self.backend, "_voice", None),
+                        "asr_language": cfg.asr.language,
+                        "asr_auto_detect": cfg.asr.auto_detect_language,
+                    })
                 elif ctl.get("type") == "bye":
                     break
+                elif ctl.get("type") == "tts_voice":
+                    voice = ctl.get("voice")
+                    if not isinstance(voice, str):
+                        await self._ctl(ws, {"type": "error", "detail": "tts_voice requires a string voice"})
+                    elif not isinstance(backend, VieneuTts):
+                        await self._ctl(ws, {"type": "error", "detail": "voice selection requires the vieneu backend"})
+                    else:
+                        try:
+                            backend.set_voice(voice)
+                        except ValueError as exc:
+                            await self._ctl(ws, {"type": "error", "detail": str(exc)})
+                        else:
+                            await self._ctl(ws, {"type": "tts_voice", "voice": voice})
+                elif ctl.get("type") == "asr_language":
+                    language = ctl.get("language")
+                    if not isinstance(language, str) or not language:
+                        await self._ctl(ws, {"type": "error", "detail": "asr_language requires a language code"})
+                    else:
+                        cfg.asr.language = language
+                        cfg.asr.auto_detect_language = False
+                        await self._ctl(ws, {
+                            "type": "asr_language", "language": language,
+                            "asr_auto_detect": False,
+                        })
+                elif ctl.get("type") == "asr_auto_detect":
+                    enabled = ctl.get("enabled")
+                    if not isinstance(enabled, bool):
+                        await self._ctl(ws, {"type": "error", "detail": "asr_auto_detect requires a boolean enabled"})
+                    else:
+                        cfg.asr.auto_detect_language = enabled
+                        await self._ctl(ws, {"type": "asr_auto_detect", "enabled": enabled})
                 else:
                     await self._ctl(ws, {"type": "error", "detail": "unknown control"})
         finally:
             stop.set()
             all_tasks = [*tasks, out_task, text_task]
+            if ui_task is not None:
+                all_tasks.append(ui_task)
             for t in all_tasks:
                 t.cancel()
             # gather() can hang on a wedged stage (stuck LLM call, executor
@@ -231,6 +338,19 @@ class WsServer:
                 "text": ev.text,
             }))
 
+    async def _forward_ui(self, bus: Bus, stop: asyncio.Event, ws) -> None:
+        """Update the client tracker and feed events to the event_sink."""
+        q = bus.subscribe(Kind.PARTIAL_TEXT, Kind.FINAL_TEXT, Kind.SPEAK,
+                          Kind.ASSISTANT_CHUNK, Kind.SOURCE_SPEAKS)
+        while not stop.is_set():
+            try:
+                ev = await asyncio.wait_for(q.get(), timeout=0.5)
+            except asyncio.TimeoutError:
+                continue
+            self._bump_client(ws, ev)
+            if self.event_sink is not None:
+                self.event_sink(ev)
+
     @staticmethod
     async def _drain_out(ws, out_q: asyncio.Queue, stop: asyncio.Event) -> None:
         while not stop.is_set():
@@ -250,14 +370,16 @@ def _to_pcm16(x: "np.ndarray") -> bytes:
 
 
 def main() -> None:
-    try:
-        asyncio.run(WsServer(load_config()).start())
-    except KeyboardInterrupt:
-        pass
+    ap = argparse.ArgumentParser(description="koko websocket interpreter server")
+    ap.add_argument("--config", default="config.toml",
+                    help="path to a config.toml (default: ./config.toml); "
+                         "use a per-machine file to point at different URLs")
+    args = ap.parse_args()
+
+    WsServer(load_config(args.config)).start()
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    logging.getLogger("faster_whisper").setLevel(logging.WARNING)
     main()

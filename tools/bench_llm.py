@@ -2,10 +2,10 @@
 
 Targets an OpenAI-compatible /v1 endpoint (vLLM / llama.cpp / ollama shim)
 exactly like the live `engine/llm.py` LlmStage: streamed SSE, sentence-sized
-chunks, one request per speech window. In the live pipeline the gate kicks
-the LLM off after `interpretation_delay_s` (5s) of continuous speech, so each
-request carries the text spoken in a ~5s rolling window of the transcript
-(rather than one request per faster-whisper sentence utterance).
+chunks, one request per speech window. In the live pipeline the gate releases
+text to the LLM once `gate.release_words` (5) source words accumulate or the
+speaker pauses (`gate.gap_reset_s`), so each request approximates a short
+speech window rather than one request per ASR sentence utterance.
 
 Usage:
     .venv/bin/python tools/bench_llm.py [max_windows] [seconds_per_window] [runs] [target_language]
@@ -37,8 +37,9 @@ MODEL = "Qwen/Qwen3-8B-AWQ"
 TEMPERATURE = 0.3
 MAX_TOKENS = 256
 TIMEOUT = 120
-# Input side: how long each translation request covers. The gate waits
-# interpretation_delay_s (5s) before kicking off the LLM.
+# Input side: how long of a speech window each translation request covers
+# (the live gate releases after ~release_words words or a pause; this is the
+# same idea as a character-budget window for the benchmark).
 WINDOW_SECONDS = 5.0
 # Prior source window and its translation, fed to the model so it can
 # continue the translation seamlessly.

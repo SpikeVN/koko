@@ -19,7 +19,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-CACHE="${HF_CACHE_DIR:-${KOKO_HF_CACHE:-$( [ -d /mnt/sdcard/PhuongBase/downloads ] && echo /mnt/sdcard/PhuongBase/downloads/hf_cache || echo "$PWD/hf_cache" )}}"
+CACHE="${HF_CACHE_DIR:-$( [ -d /mnt/sdcard/PhuongBase/downloads ] && echo /mnt/sdcard/PhuongBase/downloads/hf_cache || echo "$PWD/hf_cache" )}"
 export HF_HOME="$CACHE" HF_HUB_CACHE="$CACHE"
 mkdir -p "$CACHE"
 VIE=$( [ "${1:-}" = "--force" ] && echo --force-download || echo )

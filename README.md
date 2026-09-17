@@ -21,16 +21,17 @@ shared `Bus`:
         ▼
  ┌─────────────┐   SOURCE_CHUNK / SOURCE_SPEAKS
  │   WsFeed    │──────────────►┌─────────────┐
- │ (20 ms→1 s  │               │  ASR stage   │  faster-whisper (in-process)
- │  packing)   │               │  or Whisper- │  → PARTIAL_TEXT / FINAL_TEXT
- └─────────────┘               │   Live       │
+ │ (20 ms→1 s  │               │  ASR stage   │  WhisperLive (only engine)
+ │  packing)   │               │             │  → PARTIAL_TEXT / FINAL_TEXT
+ └─────────────┘               └──────┬──────┘
                                └──────┬───────┘
                                       │ transcript text
                                       ▼
                             ┌─────────────────────┐
-                            │ Interpretation gate │  buffers text; fires the
-                            │  (~5 s speech, 1.2 s│  LLM turn after 5 s of
-                            │  gap resets cycle)  │  continuous speech
+                            │ Interpretation gate │  buffers text; fires a
+                            │  (every 5 words or  │  burst to the LLM once
+                            │  a 1.2 s pause)     │  release_words hit, or a
+                            └─────────┬───────────┘  pause ends the utterance
                             └─────────┬───────────┘
                                       ▼
                             ┌─────────────────────┐
@@ -51,10 +52,10 @@ Stages and files:
 
 | component | file | what it does |
 |---|---|---|
-| ASR | `engine/asr.py` | streaming Whisper (in-process faster-whisper by default, or a WhisperLive server) |
+| ASR | `engine/asr.py` | streaming Whisper via a separate WhisperLive server (`whisper_live_url`) |
 | Gate | `engine/gate.py` | decides *when* buffered transcript goes to the LLM |
 | LLM | `engine/llm.py` | streaming translation; groups tokens into sentences |
-| TTS | `engine/tts.py`, `engine/tts_vieneu.py` | VieNeu-TTS v3 Turbo via local ONNX graphs (torch-free) |
+| TTS | `engine/tts.py`, `engine/tts_vieneu.py`, `engine/tts_gwen.py` | VieNeu-TTS via local ONNX, or Gwen-TTS voice cloning via Qwen3-TTS |
 | phonemes | `engine/phonemize.py` | remote G2P client (text → phonemes over HTTP) |
 | server | `ws_server.py` | hosts the whole pipeline on port 6942 |
 | reference client | `ws_client.py` | streams mic audio, plays returned TTS |
@@ -75,14 +76,24 @@ Stages and files:
 
    See `MODELS.md` for the full list of what lands where.
 
-3. **Configure** (or accept defaults) via env vars — everything lives in
-   `engine/config.py`, and `KOKO_*` env vars override it. The important
-   ones:
+3. **Configure** (or accept defaults) — everything lives in one TOML file,
+   `config.toml`, loaded at startup by `engine/config.py`. There are no env
+   vars. The important sections:
 
-   - `KOKO_LLM_BASE_URL` / `KOKO_LLM_MODEL` — any OpenAI-compatible server
-   - `KOKO_TTS` (`vieneu` / `null`), `KOKO_VIENEU_VOICE` — voice selection
-   - `KOKO_ASR_ENGINE` (`faster_whisper` default, or `whisper_live`)
-   - `KOKO_PHONEMIZE_URL` — phonemizer HTTP endpoint (box: `tools/phonemize_server.py`)
+   - `[llm]` `base_url` / `model` — any OpenAI-compatible server
+    - `[tts]` `backend` (`vieneu` / `gwen` / `null`), `vieneu_voice` — voice selection. Set `vieneu_voices_path` to use another compatible preset JSON. Gwen needs `uv sync --group gwen`, plus either `gwen_data_path` and `gwen_speaker`, or `gwen_ref_audio` and `gwen_ref_text`.
+   - `[asr]` `whisper_live_url` / `whisper_live_model` / `whisper_live_vad` —
+     WhisperLive server endpoint + client handshake facts (only ASR engine);
+     `whisper_live_host/_port/_backend/_max_clients/_max_connection_s` —
+     how the switchless `whisper_live_server.py` is launched
+   - `[phonemize]` `url` — phonemizer HTTP endpoint (box: `tools/phonemize_server.py`)
+   - `[gate]` `release_words` / `gap_reset_s` — when the translation fire
+
+   Run the server with a per-machine config when URLs differ:
+
+   ```bash
+   uv run ws_server.py --config /path/to/machine.toml
+   ```
 
 4. **Check the machine** has the weights / GPU / services:
 
@@ -91,7 +102,18 @@ Stages and files:
    uv run tools/setup_laptop.sh     # optional full setup
    ```
 
-5. **Run:**
+5. **Run the WhisperLive ASR server** (it must be up before the pipeline;
+   whisper-live lives in its own `.venv-whisperlive` because it clashes with
+   the TTS's `onnxruntime-gpu`):
+
+   ```bash
+   ./whisper-live.sh              # ASR server: ws://<this-host>:9090, switchless
+   ```
+
+   The script takes no switches — host, port, model, backend, max clients
+   and connection cap all come from the `[asr]` section of `config.toml`.
+
+6. **Run:**
 
    ```bash
    uv run ws_server.py            # server: :6942
@@ -111,6 +133,7 @@ Stages and files:
 ## Development
 
 `tools/bench_*.py` scripts benchmark LLM / TTS / audio paths.
-`engine/config.py` is the single source of truth for external facts
-(URLs, model names); ASR and TTS backend values are validated at startup —
-unknown values raise `ValueError`.
+`config.toml` (loaded by `engine/config.py`) is the single source of truth
+for external facts (URLs, model names); it's validated at startup — unknown
+sections/keys and wrong value types are rejected, and unknown ASR / TTS
+backend values raise `ValueError`.

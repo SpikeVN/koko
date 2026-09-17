@@ -2,6 +2,7 @@
 
 TtsBackend: anything that turns text -> np.ndarray[float32] audio.
   * VieneuTts  -- local vieneu-tts model (pointed at its import path / weights)
+  * GwenTts    -- Gwen-TTS Qwen3 voice-cloning model
   * NullTts    -- drops audio (offline testing / speech-free dry runs)
 
 Playback lives in `AudioPlayer`, a queue of sentence-waveforms drained
@@ -14,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import queue
 import threading
 import time
@@ -61,11 +61,12 @@ class VieneuTts(TtsBackend):
         self._phonemizer = Phonemizer(cfg)
         self._model_path = cfg.tts.vieneu_model_path or str(
             Path(__file__).resolve().parent.parent / "tts_model")
+        self._voices_path = cfg.tts.vieneu_voices_path
         self._voice = cfg.tts.vieneu_voice
-        # KOKO_TTS_GREEDY=1 -> temperature 0 (argmax path in VieneuLite._sample;
+        # cfg.tts.greedy -> temperature 0 (argmax path in VieneuLite._sample;
         # deterministic output was verified byte-identical). None = engine default 0.8.
         self._temperature = (
-            0.0 if os.getenv("KOKO_TTS_GREEDY", "") not in ("", "0") else None)
+            0.0 if self._cfg.tts.greedy else None)
 
     def _load(self) -> None:
         if self._engine is not None:
@@ -75,7 +76,9 @@ class VieneuTts(TtsBackend):
         self._engine = VieneuLite(
             model_dir=self._model_path,
             voice=self._voice,
+            voices_path=self._voices_path,
             threads=self._cfg.tts.vieneu_threads,
+            execution_provider=self._cfg.tts.execution_provider,
         )
         self.sample_rate = VieneuLite.SAMPLE_RATE
         log.info("vieneu (ONNX) loaded from %s (voice=%s)", self._model_path, self._voice)
@@ -90,16 +93,52 @@ class VieneuTts(TtsBackend):
     def _synth(self, phonemes: str) -> np.ndarray:
         with self._lock:
             self._load()
-        if self._temperature is None:
-            wav = self._engine.synth(phonemes)   # engine default (temp 0.8)
-        else:
-            wav = self._engine.synth(phonemes, temperature=self._temperature)
+            if self._temperature is None:
+                wav = self._engine.synth(phonemes)   # engine default (temp 0.8)
+            else:
+                wav = self._engine.synth(phonemes, temperature=self._temperature)
         if wav.ndim > 1:
             wav = wav.mean(axis=-1)
         return np.asarray(wav, dtype=np.float32)
 
+    def list_voices(self) -> list[tuple[str, str]]:
+        """Return preset names without loading the ONNX inference sessions."""
+        import json
+
+        metadata = Path(self._voices_path).expanduser() if self._voices_path else (
+            Path(self._model_path) / "voices_v3_turbo.json")
+        presets = json.loads(metadata.read_text(encoding="utf-8")).get("presets", {})
+        return [(name, item.get("description", "")) for name, item in presets.items()]
+
+    def set_voice(self, voice: str) -> None:
+        """Switch the preset embedding used by subsequent synthesis calls."""
+        with self._lock:
+            if self._engine is None:
+                if voice not in {name for name, _ in self.list_voices()}:
+                    raise ValueError(f"unknown voice {voice!r}")
+            else:
+                self._engine.set_voice(voice)
+            self._voice = voice
+        log.info("vieneu voice changed to %s", voice)
+
     async def close(self) -> None:
         await self._phonemizer.close()
+
+
+class GwenTts(TtsBackend):
+    """Gwen-TTS inference in a worker thread so its Torch work cannot block asyncio."""
+
+    def __init__(self, cfg: Config):
+        from engine.tts_gwen import GwenTts as GwenEngine
+
+        self._engine = GwenEngine(cfg)
+        self.sample_rate = self._engine.sample_rate
+
+    async def speak(self, text: str) -> np.ndarray:
+        loop = asyncio.get_running_loop()
+        wav = await loop.run_in_executor(None, self._engine.synth, text)
+        self.sample_rate = self._engine.sample_rate
+        return wav
 
 
 class TtsStage:
@@ -117,8 +156,10 @@ class TtsStage:
                 break
             audio = await self.backend.speak(ev.text)
             if audio.size:
-                self.player.push(audio, self.sample_rate)
-                log.info("queued %d chars of speech (%.2fs)", len(ev.text), len(audio) / self.sample_rate)
+                sample_rate = getattr(self.backend, "sample_rate", self.sample_rate)
+                self.sample_rate = sample_rate
+                self.player.push(audio, sample_rate)
+                log.info("queued %d chars of speech (%.2fs)", len(ev.text), len(audio) / sample_rate)
 
 
 class AudioPlayer:
