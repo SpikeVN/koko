@@ -21,7 +21,11 @@ import argparse
 import asyncio
 import json
 import logging
+from pathlib import Path
+import subprocess
+import sys
 import time
+from urllib.parse import urlparse
 
 import numpy as np
 import websockets
@@ -76,8 +80,9 @@ class WsFeed:
 class WsServer:
     """Holds the long-lived model handles; one pipeline per connection."""
 
-    def __init__(self, cfg, event_sink=None):
+    def __init__(self, cfg, event_sink=None, config_path="config.toml"):
         self.cfg = cfg
+        self.config_path = str(Path(config_path).resolve())
         self.busy = asyncio.Lock()
         self.transcriber = None
         self.backend = None
@@ -88,6 +93,74 @@ class WsServer:
         # live registry of connected clients: websocket -> status dict. The
         # TUI reads this to let the operator pick a client and watch it.
         self.clients: dict = {}
+        self._children: list[subprocess.Popen] = []
+
+    @staticmethod
+    def _local_endpoint(url: str) -> tuple[str, int] | None:
+        parsed = urlparse(url)
+        if parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+            return None
+        if parsed.port is None:
+            return None
+        return parsed.hostname, parsed.port
+
+    @staticmethod
+    async def _port_ready(host: str, port: int) -> bool:
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port), timeout=1)
+        except (OSError, asyncio.TimeoutError):
+            return False
+        writer.close()
+        await writer.wait_closed()
+        return True
+
+    async def _start_local_services(self) -> None:
+        """Start missing local dependencies and wait for their sockets."""
+        root = Path(__file__).resolve().parents[1]
+        services = [
+            ("phonemize", self.cfg.phonemize.url,
+             [sys.executable, str(root / "tools" / "phonemize_server.py"),
+              "--host", "127.0.0.1"]),
+            ("WhisperLive", self.cfg.asr.whisper_live_url,
+             [sys.executable, str(root / "whisper_live.py"),
+              "--config", self.config_path]),
+        ]
+        for name, url, command in services:
+            endpoint = self._local_endpoint(url)
+            if endpoint is None:
+                continue
+            host, port = endpoint
+            if await self._port_ready(host, port):
+                log.info("using existing %s service at %s:%d", name, host, port)
+                continue
+            if name == "phonemize":
+                command.extend(["--port", str(port)])
+            log.info("starting local %s service", name)
+            child = subprocess.Popen(command, cwd=root)
+            self._children.append(child)
+            deadline = time.monotonic() + 120
+            while time.monotonic() < deadline:
+                if child.poll() is not None:
+                    raise RuntimeError(
+                        f"{name} service exited with status {child.returncode}")
+                if await self._port_ready(host, port):
+                    break
+                await asyncio.sleep(0.25)
+            else:
+                raise RuntimeError(f"{name} service did not start on {host}:{port}")
+
+    async def _stop_local_services(self) -> None:
+        children, self._children = self._children, []
+        for child in reversed(children):
+            if child.poll() is not None:
+                continue
+            child.terminate()
+            try:
+                await asyncio.to_thread(child.wait, 5)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                await asyncio.to_thread(child.wait)
 
     async def _load_models(self) -> None:
         cfg = self.cfg                      # already loaded from config.toml
@@ -117,15 +190,18 @@ class WsServer:
 
     async def serve(self) -> None:
         """Load models, serve websocket connections until cancelled."""
-        await self._load_models()
-        server = await websockets.serve(self._wrapped, HOST, PORT, max_size=None)
-        log.info("koko tts-server listening on %s:%d", HOST, PORT)
         try:
+            await self._start_local_services()
+            await self._load_models()
+            server = await websockets.serve(self._wrapped, HOST, PORT, max_size=None)
+            log.info("koko tts-server listening on %s:%d", HOST, PORT)
             await asyncio.get_running_loop().create_future()  # serve forever
         finally:
-            server.close()
-            await server.wait_closed()
+            if "server" in locals():
+                server.close()
+                await server.wait_closed()
             await self._close_models()
+            await self._stop_local_services()
 
     def start(self) -> None:
         """Blocking entry point for the headless server."""
@@ -382,7 +458,7 @@ def main() -> None:
                          "use a per-machine file to point at different URLs")
     args = ap.parse_args()
 
-    WsServer(load_config(args.config)).start()
+    WsServer(load_config(args.config), config_path=args.config).start()
 
 
 if __name__ == "__main__":

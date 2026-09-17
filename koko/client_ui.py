@@ -186,6 +186,10 @@ def list_monitors() -> list[tuple[str, str]]:
     (unlike proc-tap, which redirects the target app and can disrupt it).
     Each entry is keyed by the Pulse/PipeWire monitor source name.
     """
+    # Windows has no PulseAudio monitor source or ``parec`` equivalent here.
+    # Normal microphone and speaker devices still work through PortAudio.
+    if os.name == "nt":
+        return []
     out: list[tuple[str, str]] = []
     try:
         import pulsectl
@@ -799,10 +803,10 @@ class ClientUI(App[None]):
         self.pcm_in.put(raw)
 
     def _capture_mic(self, device, stop: threading.Event) -> None:
-        # A None device opens the system default (via PipeWire, any rate);
-        # an explicit index is a raw ALSA mic, rate-locked to 48 kHz, so it
-        # is captured at 48k and resampled down to the 16 kHz wire rate.
-        if device is None:
+        # Linux's explicit ALSA devices are commonly rate-locked to 48 kHz.
+        # PortAudio devices on Windows/macOS can normally open at the wire
+        # rate directly, so do not apply the ALSA workaround there.
+        if device is None or os.name != "posix":
             rate, resample = IN_RATE, False
         else:
             rate, resample = 48_000, True
@@ -836,6 +840,9 @@ class ClientUI(App[None]):
         taps the sink the audio is already playing to, so playback is
         uninterrupted.  ``parec`` delivers 48 kHz stereo s16; we downmix to
         mono and resample to 16 kHz with soxr (matching the wire format)."""
+        if os.name == "nt":
+            self._proc_err = "monitor capture is only available on Linux/PulseAudio"
+            return
         if soxr is None:
             self._proc_err = "soxr required for monitor capture"
             return

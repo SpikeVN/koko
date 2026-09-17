@@ -4,7 +4,7 @@ One engine behind a small interface:
 
 * WhisperLiveAsr -- connects to a running WhisperLive legacy websocket
   server (finance: live, low latency, requires a GPU server started
-  separately; see README / whisper-live.sh). It is the only ASR path —
+  separately; see README / whisper_live.py). It is the only ASR path —
   the former in-process faster-whisper backend was removed.
 
 Publishes FINAL_TEXT for confirmed output.

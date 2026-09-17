@@ -70,7 +70,7 @@ serialized to binary websocket frames.
   koko-client [ws://host:6942] [--language en] [--device <name>]`.
 - Config: `config.toml` at repo root, loaded at startup; per-machine URLs
   via a different file and `--config PATH`. There are no env vars.
-- Weights land via `tools/fetch_models.sh` (see `MODELS.md`); they are
+- Weights land via `tools/fetch_models.py` (see `MODELS.md`); they are
   not in git and never should be.
 - Voice: `tts.vieneu_voice` in `config.toml`; names come from
   `tts_model/voices_v3_turbo.json` `presets` (exact, accented).

@@ -31,7 +31,7 @@ whisper_chunk_s = 0.25
 # --- Speech recognition engine -------------------------------------------
 # WhisperLive is the only ASR engine (the in-process faster-whisper backend
 # was removed). It talks to a separate WhisperLive server process (see
-# whisper-live.sh) via `whisper_live_url`.
+# whisper_live.py) via `whisper_live_url`.
 
 # Source language for ASR (ISO-639-1 / whisper codes).
 language = "en"
@@ -59,7 +59,7 @@ whisper_live_vad = true
 whisper_live_same_output_threshold = 5
 
 # --- koko.whisper_live_server process knobs (no CLI switches) --------------
-# These configure how the ASR server is launched by ./whisper-live.sh; they
+# These configure how the ASR server is launched by whisper_live.py; they
 # live here so every ASR fact — client and server — has one source of truth.
 
 # Host/port the WhisperLive server binds.

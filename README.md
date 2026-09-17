@@ -71,7 +71,7 @@ Stages and files:
 2. **Fetch model weights** (TTS + whisper weights from the HF hub):
 
    ```bash
-   tools/fetch_models.sh          # skip files already present
+   uv run tools/fetch_models.py   # skip files already present
    ```
 
    See `MODELS.md` for the full list of what lands where.
@@ -99,24 +99,26 @@ Stages and files:
 
    ```bash
    uv run tools/check_laptop.py     # optional sanity script
-   uv run tools/setup_laptop.sh     # optional full setup
+   uv run tools/setup_laptop.py     # optional full setup
    ```
 
-5. **Run the WhisperLive ASR server** (it must be up before the pipeline;
-   whisper-live lives in its own `.venv-whisperlive` because it clashes with
-   the TTS's `onnxruntime-gpu`):
+5. **Run the WhisperLive ASR server** (the Koko server automatically starts a
+   missing local WhisperLive service; this standalone command is useful for
+   running it separately):
+   WhisperLive lives in its own `.venv-whisperlive` because it clashes with
+   the TTS's `onnxruntime-gpu`.
 
    ```bash
-   ./whisper-live.sh              # ASR server: ws://<this-host>:9090, switchless
+   uv run whisper_live.py         # ASR server: ws://<this-host>:9090, switchless
    ```
 
-   The script takes no switches — host, port, model, backend, max clients
-   and connection cap all come from the `[asr]` section of `config.toml`.
+   Host, port, model, backend, max clients and connection cap come from the
+   `[asr]` section of `config.toml`.
 
 6. **Run:**
 
    ```bash
-    uv run koko-server              # server: :6942
+   uv run koko-server              # starts local phonemizer + WhisperLive as needed
     uv run koko-client              # client: mic → server → speakers
    ```
 

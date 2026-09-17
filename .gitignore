@@ -34,5 +34,5 @@ out/
 onnx_int8_int8_backup/
 tts_model/**/.cache/
 
-# Hugging Face download cache (local mirror of hf; fetch via tools/fetch_models.sh)
+# Hugging Face download cache (local mirror of hf; fetch via tools/fetch_models.py)
 hf_cache/

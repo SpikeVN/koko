@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Post-setup self-check: ASR import + model, phonemize endpoint, TTS load+synth.
+"""Post-setup self-check: ASR, phonemization, and TTS load+synth.
 
-Run from the repo root after tools/setup_laptop.sh:
-  .venv-laptop/bin/python tools/check_laptop.py
+Run from the repo root after tools/setup_laptop.py:
+  python tools/check_laptop.py
 Exit code 0 = everything green; details printed per stage.
 """
 import json
@@ -54,12 +54,14 @@ def asr():
 
 def phonemize():
     import httpx
-    r = httpx.post(
-        "http://127.0.0.1:8788/phonemize", json={"text": "xin chào"}, timeout=10)
-    r.raise_for_status()
-    ph = r.json().get("phonemes")
-    assert ph, "empty phonemes"
-    return ph
+    from engine.config import load_config
+
+    url = load_config().phonemize.url
+    response = httpx.post(url, json={"text": "xin chào"}, timeout=10)
+    response.raise_for_status()
+    phonemes = response.json().get("phonemes")
+    assert phonemes, "empty phonemes"
+    return f"{url}: {phonemes}"
 
 
 def tts():
@@ -87,7 +89,7 @@ def tts_stream():
 
 
 check("whisper-live :9090", asr)
-check("phonemize :8788", phonemize)
+check("phonemize endpoint", phonemize)
 check("vieneu synth", tts)
 check("vieneu synth_stream", tts_stream)
 

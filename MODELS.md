@@ -1,15 +1,15 @@
 # Models & binaries to provision after clone/rsync
 
 `.gitignore` / `sync` exclude the weights — git and rsync will not bring
-these over. **Run `tools/fetch_models.sh`** to fetch everything from
+these over. **Run `uv run tools/fetch_models.py`** to fetch everything from
 Hugging Face; it caches downloads under
 `/mnt/sdcard/PhuongBase/downloads/hf_cache` (root FS `/` lacks space).
 
 ## 1. One command
 
 ```bash
-tools/fetch_models.sh            # skip files already present
-tools/fetch_models.sh --force    # re-download everything
+uv run tools/fetch_models.py            # skip files already present
+uv run tools/fetch_models.py --force    # re-download everything
 ```
 
 ## 2. What it fetches
@@ -46,7 +46,7 @@ tools/fetch_models.sh --force    # re-download everything
   1.18.0 builds don't work here. Download from NVIDIA's onnxruntime GitHub
   releases (`onnxruntime_gpu-1.16.0-cp38-cp38-linux_aarch64.whl`, jetpack
   5.1.1 variant).
-- Install: `.venv/bin/pip install whls/onnxruntime_gpu-1.16.0-*.whl`
+- Install: `uv pip install --python .venv/bin/python whls/onnxruntime_gpu-1.16.0-*.whl`
   (uninstall any existing onnxruntime first).
 - CUDA EP additionally needs `libcufft-11-4` via apt
   (`sudo apt install libcufft-11-4`); cufft/cublas/cudart are preloaded from
@@ -64,7 +64,7 @@ tools/fetch_models.sh --force    # re-download everything
 ## Quick sanity after provisioning
 
 ```bash
-.venv/bin/python tools/bench_tts.py
+uv run tools/bench_tts.py
 # expect (isolation, MAXN): backbone ~17 ms/frame, acoustic+numpy ~33,
 # loop RTF ~1.2-1.3; with `tts.greedy = true` in config.toml a bit lower.
 # Full pipeline RTF (incl. codec decode via thread) ~0.65-0.83 depending on

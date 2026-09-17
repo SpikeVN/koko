@@ -15,7 +15,7 @@
   },
   {
     "label": "whisper-live",
-    "command": "./whisper-live.sh",
+    "command": "uv run whisper_live.py",
     "cwd": "/home/triph/PhuongBase/python/koko",
     "use_new_terminal": true,
     "allow_concurrent_runs": false,
