@@ -1,815 +1,676 @@
-"""Textual TUI frontend for the koko *client*.
+"""Tkinter/ttk desktop client for the koko websocket interpreter.
 
-Runs the client session (mic/proc-tap -> websocket -> translated audio
-out) inside its own event loop, so the device pickers can restart the
-audio streams live and the panels can render the transcript.
-
-    +-------------------+---------+
-    |    transcribed    |  info   |
-    +-------------------+         |
-    |    translated     | panel   |
-    +-------------------+---------+
-
-``transcribed`` shows what was heard (partial ASR words replace the
-current working text in place, finished turns separated by a blank line)
-and ``translated`` the Vietnamese interpretation, aligned turn for turn.
-The right ``info`` panel spans both rows and carries two live dropdowns:
-
-  * **Speech source** — a microphone, or proc-tap capture of a specific
-    audio-playing process (default falls back to the system mic when
-    proc-tap is not installed).
-  * **Audio output** — the device the translated speech is played on.
-
-Picking a new device tears down and reopens just that audio stream; the
-websocket session keeps running.
-
-Run:  uv run koko-client [ws://host:6942] [--language en]   (TUI when TTY)
+Tk owns the UI thread.  The websocket and audio capture/playback work in
+background threads so a slow network or PortAudio callback never blocks the
+window.  Sun Valley is applied to all ttk widgets when available.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
+from pathlib import Path
 import queue
+import signal
 import shutil
 import subprocess
+import sys
 import threading
+import tkinter as tk
+from tkinter import ttk
 
 import numpy as np
 import sounddevice as sd
-import websockets
-from rich.text import Text
 
 from . import client_devices as cdev
-
-from textual.app import App, ComposeResult
-from textual.containers import Grid, Horizontal, VerticalScroll
-from textual.widgets import Button, Header, Select, Static
+from clients.koko_client import KokoAudio, KokoClient, KokoControl
 
 IN_RATE = 16_000
 OUT_RATE = 48_000
 SLICE_MS = 20
-REFRESH_S = 0.5
-REFRESH_DEVICES_S = 3.0  # how often the device/app pickers re-poll live sources
+REFRESH_DEVICES_S = 3_000
+RECONNECT_S = 2.0
 
 ASR_LANGUAGE_OPTIONS = [
-    ("English", "en"),
-    ("Vietnamese", "vi"),
-    ("Chinese", "zh"),
-    ("Japanese", "ja"),
-    ("Korean", "ko"),
-    ("French", "fr"),
-    ("German", "de"),
-    ("Spanish", "es"),
-    ("Italian", "it"),
-    ("Portuguese", "pt"),
-    ("Russian", "ru"),
-    ("Thai", "th"),
-    ("Indonesian", "id"),
-    ("Arabic", "ar"),
-    ("Hindi", "hi"),
+    ("English", "en"), ("Vietnamese", "vi"), ("Chinese", "zh"),
+    ("Japanese", "ja"), ("Korean", "ko"), ("French", "fr"),
+    ("German", "de"), ("Spanish", "es"), ("Italian", "it"),
+    ("Portuguese", "pt"), ("Russian", "ru"), ("Thai", "th"),
+    ("Indonesian", "id"), ("Arabic", "ar"), ("Hindi", "hi"),
 ]
 
 log = logging.getLogger("koko.client_ui")
 
-RECONNECT_S = 2.0  # backoff between reconnect attempts
-
-# ---- optional process capture (proc-tap + psutil) -------------------------
-try:
-    from proctap import ProcessAudioCapture
-
-    PROC_AVAILABLE = True
-except Exception:  # pragma: no cover - optional dep
-    ProcessAudioCapture = None
-    PROC_AVAILABLE = False
-
 try:
     import soxr
-except Exception:  # pragma: no cover
+except Exception:  # pragma: no cover - optional at import time
     soxr = None
-
-_AUDIO_KEYWORDS = (
-    "chrome",
-    "firefox",
-    "edge",
-    "spotify",
-    "vlc",
-    "mpv",
-    "mpc",
-    "discord",
-    "teams",
-    "zoom",
-    "slack",
-    "obs",
-    "player",
-    "music",
-    "media",
-    "audacious",
-    "rhythmbox",
-    "foobar",
-    "aimp",
-    "winamp",
-)
-
-
-def list_processes() -> list[tuple[int, str]]:
-    """Candidate audio-source processes as ``(pid, name)`` pairs.
-
-    Prefers the live PulseAudio/PipeWire sink-input list (via ``pulsectl``),
-    which yields exactly the processes currently *playing* audio -- the ones
-    proc-tap can actually capture (e.g. Firefox's per-tab child processes,
-    not just the main browser).  Falls back to a name-keyword scan of psutil
-    or ``/proc`` when pulsectl is unavailable.  An empty list means
-    "mic only".
-    """
-    procs: dict[int, str] = {}
-    try:
-        import pulsectl
-
-        with pulsectl.Pulse("koko-procs") as pulse:
-            for si in pulse.sink_input_list():
-                pid = si.proplist.get("application.process.id")
-                if not pid or not str(pid).isdigit():
-                    continue
-                name = (
-                    si.proplist.get("application.process.binary")
-                    or si.proplist.get("application.name")
-                    or str(pid)
-                )
-                procs[int(pid)] = name
-    except Exception:
-        pass
-
-    if not procs:
-        # fallback: name-keyword scan (psutil, else /proc) for platforms
-        # without a shared Pulse/PipeWire socket.
-        try:
-            import psutil
-
-            def _iter():
-                for p in psutil.process_iter(["pid", "name"]):
-                    try:
-                        yield int(p.info["pid"]), (p.info["name"] or "")
-                    except (psutil.NoSuchProcess, psutil.AccessDenied, KeyError):
-                        continue
-
-            for pid, name in _iter():
-                if any(k in name.lower() for k in _AUDIO_KEYWORDS):
-                    procs[pid] = name
-        except Exception:
-            # no psutil: Linux /proc fallback (best-effort)
-            if os.path.isdir("/proc"):
-                try:
-                    for entry in os.listdir("/proc"):
-                        if not entry.isdigit():
-                            continue
-                        try:
-                            with open(f"/proc/{entry}/comm") as f:
-                                name = f.read().strip()
-                        except OSError:
-                            continue
-                        if any(k in name.lower() for k in _AUDIO_KEYWORDS):
-                            procs[int(entry)] = name
-                except Exception:
-                    pass
-
-    return sorted(procs.items(), key=lambda x: x[1].lower())
 
 
 def list_monitors() -> list[tuple[str, str]]:
-    """Recordable sink monitors as ``(monitor_source_name, friendly_label)``.
-
-    A "monitor" is the live tap of a sink's output, so selecting one captures
-    whatever is playing to that sink -- without moving or corking any stream
-    (unlike proc-tap, which redirects the target app and can disrupt it).
-    Each entry is keyed by the Pulse/PipeWire monitor source name.
-    """
-    # Windows has no PulseAudio monitor source or ``parec`` equivalent here.
-    # Normal microphone and speaker devices still work through PortAudio.
+    """Return PulseAudio/PipeWire sink monitors as ``(source, label)``."""
     if os.name == "nt":
         return []
     out: list[tuple[str, str]] = []
     try:
         import pulsectl
 
-        with pulsectl.Pulse("koko-monitors") as p:
-            sinks = {
-                s.index: (getattr(s, "description", None) or s.name)
-                for s in p.sink_list()
-            }
-            for s in p.source_list():
-                of = getattr(s, "monitor_of_sink", None)
-                if of in sinks and "proctap" not in s.name:
-                    out.append((s.name, sinks[of]))
+        with pulsectl.Pulse("koko-monitors") as pulse:
+            sinks = {s.index: (getattr(s, "description", None) or s.name)
+                     for s in pulse.sink_list()}
+            for source in pulse.source_list():
+                sink_id = getattr(source, "monitor_of_sink", None)
+                if sink_id in sinks and "proctap" not in source.name:
+                    out.append((source.name, sinks[sink_id]))
     except Exception:
         pass
-    return sorted(out, key=lambda x: x[1].lower())
-
-
-def _proc_to_pcm16(pcm_bytes: bytes) -> bytes:
-    """proc-tap gives 48 kHz stereo float32; return 16 kHz mono int16."""
-    x = np.frombuffer(pcm_bytes, dtype=np.float32)
-    n = x.size - (x.size % 2)  # drop a trailing sample if odd
-    mono = x[:n].reshape(-1, 2).mean(axis=1)
-    mono = soxr.resample(mono, 48_000, IN_RATE)
-    return (np.clip(mono, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+    return sorted(out, key=lambda item: item[1].lower())
 
 
 def _resample_to_16k(pcm16_bytes: bytes) -> bytes:
-    """Raw ALSA mics are rate-locked to 48 kHz; bring their int16 down to 16k."""
     if soxr is None:
         raise RuntimeError("soxr required to capture this mic at 48 kHz")
-    x = np.frombuffer(pcm16_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-    y = soxr.resample(x, 48_000, IN_RATE)
-    return (np.clip(y, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+    values = np.frombuffer(pcm16_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+    output = soxr.resample(values, 48_000, IN_RATE)
+    return (np.clip(output, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
 
 
-class ClientUI(App[None]):
-    TITLE = "CTE Intelligence Labs - koko"
-    BINDINGS = [
-        ("q", "quit", "Quit"),
-        ("ctrl+c", "quit", "Quit"),
-        ("ctrl+shift+c", "copy_transcript", "Copy transcript"),
-    ]
+class ClientUI(tk.Tk):
+    """Sun Valley ttk frontend for a single koko client session."""
 
-    CSS = """
-    Screen { background: $surface; }
+    def __init__(self, url: str, language: str, device=None, out_device=None):
+        super().__init__()
+        self.title("CTE Intelligence Labs - koko")
+        self.geometry("1180x760")
+        self.minsize(820, 560)
 
-    #layout {
-        grid-size: 2 2;
-        grid-columns: 1fr 46;
-        grid-gutter: 0 1;          /* tight: no row gap, 1-cell column gap */
-        width: 100%;
-        height: 100%;
-        padding: 0 1;
-    }
+        try:
+            import sv_ttk
+            sv_ttk.set_theme("dark")
+        except ImportError as exc:  # pragma: no cover - dependency check
+            raise RuntimeError("koko-client requires the sv-ttk package") from exc
 
-    .panel {
-        border: round $primary 60%;
-        height: 100%;
-    }
-
-    #info { row-span: 2; width: 46; }
-
-    .cfg-label { padding: 1 1 0 1; text-style: bold; }
-
-    .cfg-select { margin: 0 1; width: 100%; }
-
-    #mutes { width: auto; margin: 1 1; height: auto; }
-
-    #mutes Button { width: 1fr; margin: 0; }
-
-    #mute-out { border-left: solid $primary; }
-
-    #auto-language { width: 1fr; margin: 1 1; }
-
-    #clear-context { width: 1fr; margin: 1 1; }
-
-    #footer {
-        dock: bottom;
-        height: auto;
-        width: 100%;
-        padding: 0 1;
-        color: $text-muted;
-        text-align: center;
-        border-top: solid $primary 25%;
-    }
-    """
-
-    def __init__(self, url: str, language: str, device=None, out_device=None, **kwargs):
-        super().__init__(**kwargs)
         self.url = url
         self.language = language
-        self._in_device = device  # mic device idx or friendly string
-        self._out_device = out_device  # output device idx or friendly string
-
-    # ---- lifecycle ----
-    def compose(self) -> ComposeResult:
-        yield Header(show_clock=False)
-        with Grid(id="layout"):
-            with VerticalScroll(id="wrap-transcribed", classes="panel"):
-                yield Static(id="transcribed")
-            with VerticalScroll(id="info", classes="panel"):
-                yield Static(id="source-label", classes="cfg-label")
-                yield Select(
-                    id="source-select",
-                    options=[("…", "…")],
-                    prompt="…",
-                    allow_blank=False,
-                )
-                yield Static(id="language-label", classes="cfg-label")
-                yield Select(
-                    id="language-select", options=ASR_LANGUAGE_OPTIONS,
-                    prompt="Whisper language", allow_blank=False,
-                )
-                yield Button("Auto detect: Off", id="auto-language", classes="mute", variant="primary")
-                yield Static(id="voice-label", classes="cfg-label")
-                yield Select(
-                    id="voice-select", options=[("Loading voices...", "")],
-                    prompt="Loading voices...", allow_blank=False, disabled=True,
-                )
-                yield Static(id="out-label", classes="cfg-label")
-                yield Select(
-                    id="out-select", options=[("…", "…")], prompt="…",
-                    allow_blank=False
-                )
-                with Horizontal(id="mutes"):
-                    yield Button("Mute input", id="mute-in", classes="mute", variant="primary")
-                    yield Button("Mute output", id="mute-out", classes="mute", variant="primary")
-                yield Button("Clear context", id="clear-context", classes="mute", variant="primary")
-                yield Static(id="footer")
-            with VerticalScroll(id="wrap-translated", classes="panel"):
-                yield Static(id="translated")
-
-    def on_mount(self) -> None:
+        self._in_device = device
+        self._out_device = out_device
+        self._quitting = False
         self._connected = False
         self._session_ready = False
-        self._quitting = False
-        self._conn_err: str | None = None
-        self._proc_err: str | None = None
-        self._in_pct = 0
-        self._tx = 0
-        self._rx = 0
-
-        # session state
-        self._ws = None
-        self._session_task: asyncio.Task | None = None
-        self._send_task: asyncio.Task | None = None
-        self._stop = threading.Event()  # playback / session threads
-        self._play_thread: threading.Thread | None = None
-        self._cap_thread: threading.Thread | None = None
+        self._session_thread: threading.Thread | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._client: KokoClient | None = None
+        self._server_proc: subprocess.Popen | None = None
+        self._server_stop_thread: threading.Thread | None = None
+        self._ui_events: queue.Queue[tuple] = queue.Queue()
+        self._stop = threading.Event()
         self._cap_stop = threading.Event()
-
-        # audio plumbing
-        self.pcm_in: "queue.SimpleQueue[bytes]" = queue.SimpleQueue()
-        self.pcm_out: "queue.SimpleQueue[np.ndarray]" = queue.SimpleQueue()
-        self.out_rate = [OUT_RATE]
-        self._source = ("mic", None)  # ("mic", idx|None) / ("proc", pid) / ("mon", src)
-        self._out_dev = None  # PortAudio output index, or None=default/mix
-        self._monitor_labels: dict[str, str] = {}  # monitor source -> friendly sink
-        self._mute_in = False  # suppress sending captured PCM to the server
-        self._mute_out = False  # suppress playback of received PCM
+        self._cap_thread: threading.Thread | None = None
+        self._play_thread: threading.Thread | None = None
+        self._send_task: asyncio.Task | None = None
+        self._source = ("mic", None)
+        self._out_dev = None
+        self._mute_in = False
+        self._mute_out = False
+        self._out_rate = [OUT_RATE]
         self._tts_voice: str | None = None
-        self._asr_language = self.language
+        self._asr_language = language
         self._asr_auto_detect = False
-        self._setting_asr_language = False
-        self._tick_n = 0
+        self._in_pct = 0
+        self._proc_err = ""
+        self.pcm_in: queue.SimpleQueue[bytes] = queue.SimpleQueue()
+        self.pcm_out: queue.SimpleQueue[np.ndarray] = queue.SimpleQueue()
 
-        self.transcribed = self.query_one("#transcribed", Static)
-        self.translated = self.query_one("#translated", Static)
-        self.transcribed.update("… waiting for speaker")
-        self.translated.update("…")
-
-        self.query_one("#wrap-transcribed").border_title = "Transcribed"
-        self.query_one("#wrap-translated").border_title = "Translated"
-        self.query_one("#info").border_title = "Info"
-        self.query_one("#source-label", Static).update("Speech source")
-        self.query_one("#language-label", Static).update("Whisper language")
-        self.query_one("#voice-label", Static).update("VieNeu voice")
-        self.query_one("#out-label", Static).update("Audio output")
-        self.query_one("#footer", Static).update("(c) 2026 CTE Intelligence Labs")
-
-        # Only the two transcript panels are copyable: keep them selectable
-        # (allow_select stays True) and opt every other static text out of the
-        # mouse-selection/copy walk.
-        for sel_id in ("#source-label", "#language-label", "#voice-label", "#out-label", "#footer"):
-            self.query_one(sel_id, Static).ALLOW_SELECT = False
-
-        # transcript: finished spoken turns + in-progress current turn/partial
         self._t_turns: list[list[str]] = []
         self._t_current: list[str] = []
-        self._t_partial: str = ""
-        # translation: finished turns + in-progress current turn
+        self._t_partial = ""
         self._l_turns: list[list[str]] = []
         self._l_current: list[str] = []
+        self._source_opts: list[tuple[str, str]] = []
+        self._out_opts: list[tuple[str, str]] = []
 
-        self._build_options()
-        self._set_asr_language(self.language)
-        self.set_interval(REFRESH_S, self._tick)
-        self._session_task = asyncio.create_task(self._run_session())
+        self._build_ui()
+        self._build_options(initial=True)
+        self.protocol("WM_DELETE_WINDOW", self.close)
+        self.after(50, self._drain_ui_events)
+        self.after(500, self._refresh_status)
+        self.after(500, self._refresh_server)
+        self.after(REFRESH_DEVICES_S, self._refresh_options)
+        self._session_thread = threading.Thread(target=self._session_worker,
+                                                name="koko-websocket", daemon=True)
+        self._session_thread.start()
+
+    def _build_ui(self) -> None:
+        self.style = ttk.Style(self)
+        self.style.configure(".", focuscolor=self.style.lookup(".", "background"))
+
+        root = ttk.Frame(self, padding=16)
+        root.grid(row=0, column=0, sticky="nsew")
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+        root.rowconfigure(1, weight=1)
+        root.columnconfigure(0, weight=1)
+
+        heading = ttk.Frame(root)
+        heading.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        heading.columnconfigure(0, weight=1)
+        ttk.Label(heading, text="koko", style="Title.TLabel").grid(row=0, column=0, sticky="w")
+        self.status_var = tk.StringVar(value="Connecting...")
+
+        panes = ttk.Panedwindow(root, orient="horizontal")
+        panes.grid(row=1, column=0, sticky="nsew")
+        transcript = ttk.Frame(panes, padding=(0, 0, 12, 0))
+        settings = ttk.Frame(panes, padding=(12, 0, 0, 0))
+        panes.add(transcript, weight=4)
+        panes.add(settings, weight=1)
+        transcript.rowconfigure(0, weight=1)
+        transcript.rowconfigure(1, weight=1)
+        transcript.columnconfigure(0, weight=1)
+        self.transcribed = self._text_panel(transcript, 0, "Transcribed")
+        self.translated = self._text_panel(transcript, 1, "Translated")
+        self.transcribed.insert("1.0", "Waiting for speaker...", "placeholder")
+        self.translated.insert("1.0", "Waiting for translation...", "placeholder")
+
+        settings.columnconfigure(0, weight=1)
+        self.source_var = self._setting(settings, 0, "Speech source")
+        self.language_var = self._setting(settings, 2, "Whisper language")
+        self.voice_var = self._setting(settings, 4, "VieNeu voice")
+        self.output_var = self._setting(settings, 6, "Audio output")
+        self.source_combo = ttk.Combobox(settings, textvariable=self.source_var, state="readonly")
+        self.source_combo.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        self.language_combo = ttk.Combobox(
+            settings, textvariable=self.language_var, state="readonly",
+            values=[label for label, _ in ASR_LANGUAGE_OPTIONS])
+        self.language_combo.grid(row=3, column=0, sticky="ew", pady=(0, 5))
+        self.language_combo.bind("<<ComboboxSelected>>", self._language_changed)
+        self.auto_button = ttk.Button(
+            settings, text="Auto detect", style="Toggle.TButton",
+            command=self._toggle_auto,
+        )
+        self.auto_button.grid(row=3, column=1, sticky="ew", padx=(8, 0), pady=(0, 5))
+        self.voice_combo = ttk.Combobox(settings, textvariable=self.voice_var,
+                                        state="disabled")
+        self.voice_combo.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        self.voice_combo.bind("<<ComboboxSelected>>", self._voice_changed)
+        self.output_combo = ttk.Combobox(settings, textvariable=self.output_var, state="readonly")
+        self.output_combo.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        self.output_combo.bind("<<ComboboxSelected>>", self._output_changed)
+        self.mute_in_button = ttk.Button(settings, text="Mute input",
+                                         style="Toggle.TButton", command=self._toggle_input)
+        self.mute_in_button.grid(row=8, column=0, sticky="ew", padx=(0, 4), pady=4)
+        self.mute_out_button = ttk.Button(settings, text="Mute output",
+                                          style="Toggle.TButton", command=self._toggle_output)
+        self.mute_out_button.grid(row=8, column=1, sticky="ew", padx=(4, 0), pady=4)
+        ttk.Button(settings, text="Clear context", command=self._clear_context).grid(
+            row=9, column=0, columnspan=2, sticky="ew", pady=(8, 4))
+        ttk.Button(settings, text="Reload mic & speakers", command=self._reload_audio).grid(
+            row=10, column=0, columnspan=2, sticky="ew", pady=(4, 4))
+        self.level_var = tk.StringVar(value="Input level  0%")
+        ttk.Label(settings, textvariable=self.level_var).grid(row=11, column=0,
+                                                              columnspan=2, sticky="w", pady=12)
+        self.server_var = tk.StringVar(value="Server stopped")
+        self.server_button = ttk.Button(settings, text="Run server",
+                                        style="Toggle.TButton",
+                                        command=self._toggle_server)
+        self.server_button.grid(row=14, column=0, columnspan=2, sticky="ew")
+        settings.columnconfigure(1, weight=1)
+
+        self.footer_var = tk.StringVar(value="Disconnected")
+        ttk.Label(root, textvariable=self.footer_var, style="Caption.TLabel").grid(
+            row=2, column=0, sticky="w", pady=(10, 0))
+        self.style.configure("Title.TLabel", font=("TkDefaultFont", 22, "bold"))
+        self.style.configure("Caption.TLabel", foreground="#8a8a8a")
+
+    @staticmethod
+    def _setting(parent, row: int, label: str) -> tk.StringVar:
+        ttk.Label(parent, text=label).grid(row=row, column=0, columnspan=2,
+                                           sticky="w", pady=(4, 5))
+        return tk.StringVar()
+
+    @staticmethod
+    def _text_panel(parent, row: int, title: str) -> tk.Text:
+        frame = ttk.LabelFrame(parent, text=title, padding=8)
+        frame.grid(row=row, column=0, sticky="nsew", pady=(0, 12 if row == 0 else 0))
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+        text = tk.Text(frame, wrap="word", relief="flat", borderwidth=0,
+                       padx=8, pady=8, state="disabled", font=("TkDefaultFont", 12),
+                       highlightthickness=0)
+        text.tag_configure("placeholder", foreground="#8a8a8a")
+        text.tag_configure("gray", foreground="#8a8a8a")
+        text.grid(row=0, column=0, sticky="nsew")
+        return text
+
+    def _build_options(self, initial=False) -> None:
+        self._compute_options()
+        source_values = [label for label, _ in self._source_opts]
+        output_values = [label for label, _ in self._out_opts]
+        self.source_combo["values"] = source_values
+        self.output_combo["values"] = output_values
+        if initial:
+            source = self._find_requested(self._in_device, self._source_opts, "idx:", "mic")
+            output = self._find_requested(self._out_device, self._out_opts, "out:", "out:")
+            self.source_var.set(self._label_for(source, self._source_opts))
+            self.output_var.set(self._label_for(output, self._out_opts))
+            self._set_language(self.language)
+            self._source = self._value_to_source(source)
+            self._out_dev = self._value_to_out(output)
 
     def _compute_options(self) -> None:
-        """Re-derive the source/output option lists (and the PipeWire node
-        name maps used for display). Refreshed periodically so newly-started
-        apps (proc-tap) and hotplugged devices show up live."""
         pw_ok = cdev.pipewire_available()
         devs = sd.query_devices() if pw_ok else None
-
-        self._pw_sources = cdev.list_sources(devs) if pw_ok else []
-        self._pw_sinks = cdev.list_sinks(devs) if pw_ok else []
+        sources = cdev.list_sources(devs) if pw_ok else []
+        sinks = cdev.list_sinks(devs) if pw_ok else []
         if pw_ok:
             source_opts = [("Mic: (system default)", "mic")]
-            for d in self._pw_sources:
-                if d.dev_index is None:
-                    continue
-                source_opts.append((f"Mic: {d.name}", f"idx:{d.dev_index}"))
+            source_opts += [(f"Mic: {d.name}", f"idx:{d.dev_index}") for d in sources if d.dev_index is not None]
+            output_opts = [("Output: (system default / mix)", "out:")]
+            output_opts += [(f"Output: {d.name}", f"out:{d.dev_index}") for d in sinks if d.dev_index is not None]
         else:
             source_opts = [("Mic: (default)", "mic")]
-            for i, d in enumerate(sd.query_devices()):
-                if d["max_input_channels"] > 0:
-                    source_opts.append((f"Mic: {d['name']}", f"idx:{i}"))
-        # NOTE: proc-tap per-process capture is intentionally NOT offered here:
-        # on PipeWire it redirects the app's stream to a null sink, which both
-        # pauses the playback and captures the wrong (silent) stream. Sink
-        # monitor capture below does neither.
-        self._monitor_labels = {}
-        for mon_name, label in list_monitors():
-            self._monitor_labels[mon_name] = label
-            source_opts.append((f"Monitor: {label}", f"mon:{mon_name}"))
-        self._source_opts = source_opts
-
-        if pw_ok:
-            out_opts = [("Output: (system default / mix)", "out:")]
-            for d in self._pw_sinks:
-                if d.dev_index is None:
-                    continue
-                out_opts.append((f"Output: {d.name}", f"out:{d.dev_index}"))
-        else:
-            out_opts = [("Output: (default)", "out:")]
-            for i, d in enumerate(sd.query_devices()):
-                if d["max_output_channels"] > 0:
-                    out_opts.append((f"Output: {d['name']}", f"out:{i}"))
-        self._out_opts = out_opts
+            output_opts = [("Output: (default)", "out:")]
+            for index, device in enumerate(sd.query_devices()):
+                if device["max_input_channels"] > 0:
+                    source_opts.append((f"Mic: {device['name']}", f"idx:{index}"))
+                if device["max_output_channels"] > 0:
+                    output_opts.append((f"Output: {device['name']}", f"out:{index}"))
+        for name, label in list_monitors():
+            source_opts.append((f"Monitor: {label}", f"mon:{name}"))
+        self._source_opts, self._out_opts = source_opts, output_opts
 
     @staticmethod
-    def _value_to_source(value: str) -> tuple:
-        """Decode a source Select value into ``self._source`` state."""
-        if value.startswith("proc:"):
-            return ("proc", int(value.split(":", 1)[1]))
+    def _find_requested(request, options, prefix, fallback):
+        if isinstance(request, int):
+            value = f"{prefix}{request}"
+            if value in [v for _, v in options]:
+                return value
+        return fallback
+
+    @staticmethod
+    def _label_for(value, options):
+        return next((label for label, item in options if item == value), options[0][0])
+
+    @staticmethod
+    def _value_to_source(value):
         if value.startswith("idx:"):
-            return ("mic", int(value.split(":", 1)[1]))
+            return "mic", int(value[4:])
         if value.startswith("mon:"):
-            return ("mon", value.split(":", 1)[1])
-        return ("mic", None)
+            return "mon", value[4:]
+        return "mic", None
 
     @staticmethod
-    def _value_to_out(value: str):
-        """Decode an output Select value into ``self._out_dev``."""
-        if value.startswith("out:") and value[4:].isdigit():
-            return int(value[4:])
-        return None
+    def _value_to_out(value):
+        return int(value[4:]) if value.startswith("out:") and value[4:].isdigit() else None
 
-    def _build_options(self) -> None:
-        """Populate the two dropdowns from live PipeWire / process lists.
-
-        Select values are strings (Textual can't print arbitrary tuples in
-        the prompt line): sources encode as ``"idx:<n>"`` (a specific
-        PortAudio mic device), ``"proc:<pid>"`` (app capture) or ``"mic"``
-        (system default), outputs as ``"out:<n>"`` (a specific PortAudio
-        output device) or ``"out:"`` (system default / mix -- follows the
-        PipeWire active default so per-app routing via pavucontrol works).
-
-        Friendly names come from PipeWire itself and are mapped to the
-        PortAudio device index that actually carries each node's audio, so
-        selecting a node opens that device directly -- no reliance on the
-        system default changing.  Raw ALSA names are only a fallback when
-        PipeWire isn't available.
-        """
-        self._compute_options()
-        src = self.query_one("#source-select", Select)
-        out = self.query_one("#out-select", Select)
-        src.set_options(self._source_opts)
-        out.set_options(self._out_opts)
-
-        # initial values from CLI args (a PortAudio index, or None = default)
-        def _match(val, opts, prefix, fallback):
-            if isinstance(val, int):
-                cand = prefix + str(val)
-                return cand if cand in [v for _, v in opts] else fallback
-            return fallback
-
-        sv = _match(self._in_device, self._source_opts, "idx:", "mic")
-        ov = _match(self._out_device, self._out_opts, "out:", "out:")
-        src.value = sv
-        out.value = ov
-        self._source = self._value_to_source(sv)
-        self._out_dev = self._value_to_out(ov)
+    def _selected_value(self, combo, options):
+        label = combo.get()
+        return next((value for item, value in options if item == label), options[0][1])
 
     def _refresh_options(self) -> None:
-        """Re-poll sources/outputs, keeping the current selection stable."""
-        src = self.query_one("#source-select", Select)
-        out = self.query_one("#out-select", Select)
-        old_src, old_out = src.value, out.value
-        old_source, old_out_dev = self._source, self._out_dev
+        old_source, old_output = self._source, self._out_dev
         self._compute_options()
-        src.set_options(self._source_opts)
-        out.set_options(self._out_opts)
-        avail_src = [v for _, v in self._source_opts]
-        avail_out = [v for _, v in self._out_opts]
-        newsrc = old_src if old_src in avail_src else "mic"
-        newout = old_out if old_out in avail_out else "out:"
-        src.value = newsrc
-        out.value = newout
-        new_source = self._value_to_source(newsrc)
-        if new_source != old_source:
-            self._source = new_source
-            if self._connected:
-                self._apply_source()
-        self._out_dev = self._value_to_out(newout)
+        current_source = self._selected_value(self.source_combo, self._source_opts) if self.source_combo.get() else "mic"
+        current_output = self._selected_value(self.output_combo, self._out_opts) if self.output_combo.get() else "out:"
+        self.source_combo["values"] = [label for label, _ in self._source_opts]
+        self.output_combo["values"] = [label for label, _ in self._out_opts]
+        if current_source not in [value for _, value in self._source_opts]:
+            current_source = "mic"
+        if current_output not in [value for _, value in self._out_opts]:
+            current_output = "out:"
+        self.source_var.set(self._label_for(current_source, self._source_opts))
+        self.output_var.set(self._label_for(current_output, self._out_opts))
+        self._source, self._out_dev = self._value_to_source(current_source), self._value_to_out(current_output)
+        if self._source != old_source and self._connected:
+            self._apply_source()
+        if self._out_dev != old_output:
+            self.pcm_out.put(np.zeros(1, dtype=np.float32))
+        self.after(REFRESH_DEVICES_S, self._refresh_options)
 
-    # ---- websocket session ----
+    # ---- websocket worker -------------------------------------------------
+    def _session_worker(self) -> None:
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        try:
+            self._loop.run_until_complete(self._run_session())
+        finally:
+            self._loop.close()
+
     async def _run_session(self) -> None:
-        while True:
-            self._conn_err = None
+        while not self._quitting:
+            client = KokoClient(self.url)
+            self._client = client
             try:
-                async with websockets.connect(self.url, max_size=None) as ws:
-                    self._ws = ws
-                    self._connected = True
-                    await ws.send(
-                        json.dumps({
-                            "type": "hello", "language": self._asr_language,
-                            "asr_auto_detect": self._asr_auto_detect,
-                        })
-                    )
-                    self._start_audio()
-                    try:
-                        async for msg in ws:
-                            await self._handle(ws, msg)
-                    finally:
-                        self._stop_audio()
-            except (
-                websockets.ConnectionClosed,
-                websockets.WebSocketException,
-                OSError,
-            ) as exc:
-                self._conn_err = f"disconnected: {exc}"
-            except Exception as exc:  # surface anything else on screen
-                log.exception("session crashed")
-                self._conn_err = f"session error: {exc}"
-                self._stop_audio()
+                await client.connect(self._asr_language, auto_detect=self._asr_auto_detect)
+                self._connected = True
+                self._post_ui(self._set_connection, True, "Connected")
+                self._start_audio()
+                async for message in client.messages():
+                    if isinstance(message, KokoAudio):
+                        self._out_rate[0] = message.rate
+                        self.pcm_out.put(message.samples())
+                    else:
+                        self._post_ui(self._handle_control, message)
+            except Exception as exc:
+                if not self._quitting:
+                    log.debug("websocket session ended", exc_info=True)
+                    self._post_ui(self._set_connection, False, f"Disconnected: {exc}")
             finally:
                 self._connected = False
-                self._session_ready = False
-                self._ws = None
+                self._stop_audio()
+                await client.close(send_bye=False)
+                self._client = None
+            if not self._quitting:
+                await asyncio.sleep(RECONNECT_S)
 
-            if self._quitting:
-                return
-            log.info("reconnecting in %.0fs", RECONNECT_S)
-            await asyncio.sleep(RECONNECT_S)
+    def _post_ui(self, callback, *args) -> None:
+        self._ui_events.put((callback, args))
 
-    def _start_audio(self) -> None:
-        self._stop.clear()
-        self._cap_stop.set()  # ensure clean prior state
-        self._play_thread = threading.Thread(target=self._play, daemon=True)
-        self._play_thread.start()
-        self._apply_source()
-        self._send_task = asyncio.create_task(self._sender())
+    def _drain_ui_events(self) -> None:
+        try:
+            while True:
+                callback, args = self._ui_events.get_nowait()
+                callback(*args)
+        except queue.Empty:
+            pass
+        if not self._quitting:
+            self.after(50, self._drain_ui_events)
 
-    def _stop_audio(self) -> None:
-        self._stop.set()
-        if self._send_task is not None:
-            self._send_task.cancel()
-            self._send_task = None
-        self._teardown_capture()
-        if self._play_thread is not None:
-            while not self.pcm_out.empty():  # unblock _play from stream.write
-                try:
-                    self.pcm_out.get_nowait()
-                except queue.Empty:
-                    break
-            self._play_thread.join(timeout=1.0)  # portaudio segfaults if killed
-            self._play_thread = None
+    def _set_connection(self, connected: bool, status: str) -> None:
+        self._connected = connected
+        self._session_ready = connected
+        self.status_var.set(status)
+        self.footer_var.set(status)
 
-    async def _sender(self) -> None:
-        """Drain captured PCM16 -> websocket."""
-        while not self._stop.is_set():
-            try:
-                raw = self.pcm_in.get_nowait()
-            except queue.Empty:
-                await asyncio.sleep(0.01)  # ~2x the capture block rate
-                continue
-            if self._mute_in:  # keep draining (live level) but don't transmit
-                continue
-            if self._ws is not None:
-                self._tx += len(raw)
-                await self._ws.send(raw)
-
-    async def _handle(self, ws, msg) -> None:
-        if isinstance(msg, bytes):
-            self._rx += len(msg)
-            x = np.frombuffer(msg, dtype=np.int16).astype(np.float32) / 32768.0
-            self.pcm_out.put(x)
-            return
-        ctl = json.loads(msg)
-        t = ctl.get("type")
-        if t == "audio":
-            self.out_rate[0] = int(ctl.get("rate", OUT_RATE))
-        elif t == "ready":
+    def _handle_control(self, message: KokoControl) -> None:
+        data = message.data
+        if message.type == "ready":
             self._session_ready = True
-            self._conn_err = None
-            if ctl.get("asr_language"):
-                self._set_asr_language(ctl["asr_language"])
-            if "asr_auto_detect" in ctl:
-                self._set_asr_auto_detect(ctl["asr_auto_detect"])
-            if "tts_voices" in ctl:
-                self._set_voice_options(ctl["tts_voices"], ctl.get("tts_voice"))
-        elif t == "asr_language":
-            self._set_asr_language(ctl.get("language"))
-            self._set_asr_auto_detect(ctl.get("asr_auto_detect", False))
-        elif t == "asr_auto_detect":
-            self._set_asr_auto_detect(ctl.get("enabled"))
-        elif t == "tts_voice":
-            self._tts_voice = ctl.get("voice")
-        elif t == "partial":
-            self._t_partial = ctl.get("text", "") or ""
+            if data.get("asr_language"):
+                self._set_language(data["asr_language"])
+            if "asr_auto_detect" in data:
+                self._set_auto(data["asr_auto_detect"])
+            if "tts_voices" in data:
+                self._set_voices(data["tts_voices"], data.get("tts_voice"))
+        elif message.type == "asr_language":
+            self._set_language(data.get("language"))
+        elif message.type == "asr_auto_detect":
+            self._set_auto(data.get("enabled"))
+        elif message.type == "tts_voice":
+            self._tts_voice = data.get("voice")
+        elif message.type == "partial":
+            self._t_partial = data.get("text", "") or ""
             self._render_transcribed()
-        elif t == "final":
-            if ctl.get("text"):
-                self._t_current.append(ctl["text"])
+        elif message.type == "final":
+            final_text = (data.get("text") or "").strip()
+            partial = self._t_partial.strip()
+            if final_text:
+                previous = self._turn_text(self._t_current)
+                if partial and partial.endswith(final_text):
+                    # Whisper's committed CJK segment can be only the last
+                    # few characters of the longer provisional hypothesis.
+                    candidate = partial
+                elif partial and final_text.endswith(partial):
+                    candidate = final_text
+                else:
+                    candidate = final_text
+                    if partial:
+                        candidate += partial
+                if not previous.endswith(candidate):
+                    if previous and candidate.startswith(previous):
+                        self._t_current[-1] = candidate
+                    else:
+                        self._t_current.append(candidate)
             self._t_partial = ""
             self._render_transcribed()
-        elif t == "speak":
-            # gate released a turn: commit it, open the next on both panels.
+        elif message.type == "speak":
             if self._t_current or self._t_partial:
-                self._t_turns.append(self._t_current)
-                self._t_current = []
-                self._t_partial = ""
+                turn = [*self._t_current]
+                if self._t_partial:
+                    turn.append(self._t_partial)
+                self._t_turns.append(turn)
+                self._t_current, self._t_partial = [], ""
                 self._render_transcribed()
             if self._l_current:
                 self._l_turns.append(self._l_current)
                 self._l_current = []
                 self._render_translated()
-        elif t == "translation":
-            if ctl.get("text"):
-                self._l_current.append(ctl["text"])
+        elif message.type == "translation":
+            if data.get("text"):
+                self._l_current.append(data["text"])
             self._render_translated()
-        elif t == "error":
-            self._conn_err = "server: %s" % ctl.get("detail")
+        elif message.type == "error":
+            self.status_var.set(f"Server: {data.get('detail', '')}")
 
-    # ---- audio capture (source switching) ----
-    def on_select_changed(self, event: Select.Changed) -> None:
-        widget = event.select.id
-        value = event.value
-        if value in (Select.BLANK, None):
+    # ---- controls ---------------------------------------------------------
+    def _run_control(self, operation) -> None:
+        if self._loop and self._client and self._connected:
+            asyncio.run_coroutine_threadsafe(operation(self._client), self._loop)
+
+    def _language_changed(self, _event=None) -> None:
+        label = self.language_var.get()
+        language = next((code for name, code in ASR_LANGUAGE_OPTIONS if name == label), label)
+        self._asr_language = language
+        self._set_auto(False)
+        self._run_control(lambda client: client.set_language(language))
+
+    def _voice_changed(self, _event=None) -> None:
+        voice = self.voice_var.get()
+        self._tts_voice = voice
+        self._run_control(lambda client: client.set_voice(voice))
+
+    def _output_changed(self, _event=None) -> None:
+        self._out_dev = self._value_to_out(self._selected_value(self.output_combo, self._out_opts))
+        self.pcm_out.put(np.zeros(1, dtype=np.float32))
+
+    def _toggle_auto(self) -> None:
+        self._set_auto(not self._asr_auto_detect)
+        self._run_control(lambda client: client.set_auto_detect(self._asr_auto_detect))
+
+    def _toggle_input(self) -> None:
+        self._mute_in = not self._mute_in
+        if self._mute_in:
+            self._teardown_capture()
+            self._in_pct = 0
+            while True:
+                try:
+                    self.pcm_in.get_nowait()
+                except queue.Empty:
+                    break
+        else:
+            self._apply_source()
+        self.mute_in_button.state(["selected"] if self._mute_in else ["!selected"])
+        self.mute_in_button.configure(text="Unmute input" if self._mute_in else "Mute input")
+
+    def _toggle_output(self) -> None:
+        self._mute_out = not self._mute_out
+        self.mute_out_button.state(["selected"] if self._mute_out else ["!selected"])
+        self.mute_out_button.configure(text="Unmute output" if self._mute_out else "Mute output")
+
+    def _clear_context(self) -> None:
+        self._t_turns.clear(); self._t_current.clear(); self._t_partial = ""
+        self._l_turns.clear(); self._l_current.clear()
+        self._render_transcribed(); self._render_translated()
+        self._run_control(lambda client: client.clear_context())
+
+    def _reload_audio(self) -> None:
+        """Reopen both PortAudio streams and refresh available devices."""
+        self._stop_audio()
+        self._refresh_options()
+        if self._connected and self._loop and self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._start_audio)
+
+    # ---- local server -----------------------------------------------------
+    def _toggle_server(self) -> None:
+        if self._server_proc is not None and self._server_proc.poll() is None:
+            self._stop_server()
+        else:
+            self._start_server()
+
+    def _start_server(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        try:
+            self._server_proc = subprocess.Popen(
+                [sys.executable, "-m", "koko.server", "--config", str(root / "config.toml")],
+                cwd=root,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.STDOUT,
+                start_new_session=(os.name != "nt"),
+            )
+        except OSError as exc:
+            self.server_var.set(f"Server failed: {exc}")
             return
-        if widget == "source-select":
-            new = self._value_to_source(value)
-            if new != self._source:
-                self._source = new
-                self._apply_source()
-        elif widget == "language-select":
-            self._asr_language = str(value)
-            self._set_asr_auto_detect(False)
-            if not self._setting_asr_language and self._connected and self._ws is not None:
-                asyncio.create_task(self._ws.send(json.dumps({
-                    "type": "asr_language", "language": self._asr_language,
-                })))
-        elif widget == "out-select":
-            self._out_dev = self._value_to_out(value)
-            # a silent nudge lets _play notice the new device promptly
-            if self._connected:
-                self.pcm_out.put(np.zeros(1, dtype=np.float32))
-        elif widget == "voice-select":
-            self._tts_voice = str(value)
-            if self._connected and self._ws is not None:
-                asyncio.create_task(self._ws.send(json.dumps({
-                    "type": "tts_voice", "voice": self._tts_voice,
-                })))
+        self.server_var.set("Server starting...")
+        self.server_button.configure(text="Stop server")
+        self.server_button.state(["selected"])
 
-    def _set_asr_language(self, language) -> None:
-        """Reflect a server-confirmed language without sending another control."""
+    def _stop_server(self, wait: bool = False) -> None:
+        proc = self._server_proc
+        if proc is None or proc.poll() is not None:
+            self._server_proc = None
+            self.server_var.set("Server stopped")
+            self.server_button.configure(text="Run server", state="normal")
+            self.server_button.state(["!selected"])
+            return
+        self.server_var.set("Stopping server...")
+        self.server_button.configure(state="disabled")
+        if wait:
+            self._terminate_server(proc)
+        elif self._server_stop_thread is None or not self._server_stop_thread.is_alive():
+            self._server_stop_thread = threading.Thread(
+                target=self._terminate_server, args=(proc,),
+                name="koko-server-stop", daemon=True,
+            )
+            self._server_stop_thread.start()
+
+    def _terminate_server(self, proc: subprocess.Popen) -> None:
+        try:
+            if proc.poll() is None:
+                if os.name == "nt":
+                    proc.terminate()
+                else:
+                    proc.send_signal(signal.SIGINT)
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
+        finally:
+            self._post_ui(self._server_stopped, proc)
+
+    def _server_stopped(self, proc: subprocess.Popen) -> None:
+        if self._server_proc is proc:
+            self._server_proc = None
+            self.server_var.set("Server stopped")
+            self.server_button.configure(text="Run server", state="normal")
+            self.server_button.state(["!selected"])
+
+    def _refresh_server(self) -> None:
+        proc = self._server_proc
+        if proc is not None:
+            return_code = proc.poll()
+            if return_code is None:
+                if self.server_var.get() == "Server starting...":
+                    self.server_var.set("Server running")
+                self.server_button.configure(text="Stop server")
+                self.server_button.state(["selected"])
+            elif self._server_stop_thread is None or not self._server_stop_thread.is_alive():
+                self._server_proc = None
+                self.server_var.set(f"Server exited ({return_code})")
+                self.server_button.configure(text="Run server", state="normal")
+                self.server_button.state(["!selected"])
+        if not self._quitting:
+            self.after(500, self._refresh_server)
+
+    def _set_language(self, language) -> None:
         if not isinstance(language, str):
             return
-        select = self.query_one("#language-select", Select)
-        values = [value for _, value in ASR_LANGUAGE_OPTIONS]
-        if language not in values:
-            return
-        self._setting_asr_language = True
-        try:
-            self._asr_language = language
-            select.value = language
-        finally:
-            self._setting_asr_language = False
+        self._asr_language = language
+        self.language_var.set(next((name for name, code in ASR_LANGUAGE_OPTIONS if code == language), language))
 
-    def _set_asr_auto_detect(self, enabled) -> None:
+    def _set_auto(self, enabled) -> None:
         if not isinstance(enabled, bool):
             return
         self._asr_auto_detect = enabled
-        button = self.query_one("#auto-language", Button)
-        button.label = "Auto detect: On" if enabled else "Auto detect: Off"
-        button.set_class(enabled, "muted")
+        self.auto_button.state(["selected"] if enabled else ["!selected"])
 
-    def _set_voice_options(self, voices, selected) -> None:
-        """Populate the TTS selector from server-provided VieNeu metadata."""
-        select = self.query_one("#voice-select", Select)
-        options = []
-        for voice in voices:
-            if not isinstance(voice, (list, tuple)) or len(voice) != 2:
+    def _set_voices(self, voices, selected) -> None:
+        values = [name for item in voices if isinstance(item, (list, tuple)) and len(item) == 2
+                  for name in [item[0]]]
+        if not values:
+            self.voice_combo.configure(state="disabled")
+            return
+        self.voice_combo.configure(values=values, state="readonly")
+        self._tts_voice = selected if selected in values else values[0]
+        self.voice_var.set(self._tts_voice)
+
+    # ---- audio ------------------------------------------------------------
+    def _start_audio(self) -> None:
+        self._stop.clear()
+        self._cap_stop.set()
+        self._play_thread = threading.Thread(target=self._play, name="koko-playback", daemon=True)
+        self._play_thread.start()
+        if not self._mute_in:
+            self._apply_source()
+        self._send_task = asyncio.create_task(self._sender())
+
+    def _stop_audio(self) -> None:
+        self._stop.set()
+        if self._send_task:
+            if self._loop and self._loop.is_running():
+                self._loop.call_soon_threadsafe(self._send_task.cancel)
+            self._send_task = None
+        self._teardown_capture()
+        if self._play_thread:
+            while not self.pcm_out.empty():
+                try:
+                    self.pcm_out.get_nowait()
+                except queue.Empty:
+                    break
+            self._play_thread.join(timeout=1.0)
+            self._play_thread = None
+
+    async def _sender(self) -> None:
+        while not self._stop.is_set():
+            try:
+                raw = self.pcm_in.get_nowait()
+            except queue.Empty:
+                await asyncio.sleep(0.01)
                 continue
-            name, description = voice
-            options.append((f"{name} - {description}" if description else name, name))
-        if not options:
-            select.disabled = True
-            return
-        select.set_options(options)
-        self._tts_voice = selected if selected in [value for _, value in options] else options[0][1]
-        select.value = self._tts_voice
-        select.disabled = False
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "mute-in":
-            self._mute_in = not self._mute_in
-            event.button.label = "Unmute input" if self._mute_in else "Mute input"
-        elif event.button.id == "mute-out":
-            self._mute_out = not self._mute_out
-            event.button.label = "Unmute output" if self._mute_out else "Mute output"
-        elif event.button.id == "auto-language":
-            self._set_asr_auto_detect(not self._asr_auto_detect)
-            if self._connected and self._ws is not None:
-                asyncio.create_task(self._ws.send(json.dumps({
-                    "type": "asr_auto_detect", "enabled": self._asr_auto_detect,
-                })))
-            return
-        elif event.button.id == "clear-context":
-            self._t_turns.clear()
-            self._t_current.clear()
-            self._t_partial = ""
-            self._l_turns.clear()
-            self._l_current.clear()
-            self._render_transcribed()
-            self._render_translated()
-            if self._connected and self._ws is not None:
-                asyncio.create_task(self._ws.send(json.dumps({
-                    "type": "clear_context",
-                })))
-            self.notify("Context cleared")
-            return
-        else:
-            return
-        # reflect the muted state with a red-tinted style (no white text)
-        if event.button.id == "mute-in":
-            self.query_one("#mute-in").set_class(self._mute_in, "muted")
-        else:
-            self.query_one("#mute-out").set_class(self._mute_out, "muted")
-
-    def action_copy_transcript(self) -> None:
-        """Copy the current mouse text-selection (only transcript panels are
-        selectable) to the clipboard."""
-        try:
-            sel = self.screen.get_selected_text()
-        except Exception:
-            sel = None
-        if sel:
-            self.copy_to_clipboard(sel)
-            self.notify("Copied transcript selection")
-        else:
-            self.notify(
-                "Drag to select text in a transcript panel first, then ctrl+shift+c",
-                severity="warning",
-                timeout=4,
-            )
+            if not self._mute_in and self._client:
+                await self._client.send_audio(raw)
 
     def _apply_source(self) -> None:
-        """Restart the capture thread to match ``self._source``."""
         self._teardown_capture()
         if not self._connected:
             return
-        kind, value = self._source
         self._cap_stop = threading.Event()
-        if kind == "proc":
-            if not PROC_AVAILABLE or ProcessAudioCapture is None:
-                self._proc_err = "proc-tap not installed"
-                return
-            self._cap_thread = threading.Thread(
-                target=self._capture_proc, args=(value, self._cap_stop), daemon=True
-            )
-        elif kind == "mon":
+        kind, value = self._source
+        if kind == "mon":
             if shutil.which("parec") is None:
                 self._proc_err = "parec not found (install pulseaudio-utils)"
                 return
-            self._cap_thread = threading.Thread(
-                target=self._capture_monitor,
-                args=(value, self._cap_stop),
-                daemon=True,
-            )
+            target = self._capture_monitor
+            args = (value, self._cap_stop)
         else:
-            # ("mic", idx|None): open that PortAudio device index, or the
-            # system default (None) which follows the PipeWire active default.
-            self._cap_thread = threading.Thread(
-                target=self._capture_mic, args=(value, self._cap_stop), daemon=True
-            )
+            target = self._capture_mic
+            args = (value, self._cap_stop)
+        self._cap_thread = threading.Thread(target=target, args=args, daemon=True)
         self._cap_thread.start()
 
     def _teardown_capture(self) -> None:
-        if self._cap_thread is not None:
+        if self._cap_thread:
             self._cap_stop.set()
             self._cap_thread.join(timeout=1.0)
             self._cap_thread = None
 
-    def _on_pcm16(self, raw: bytes) -> None:
-        self._in_pct = int(np.max(np.abs(np.frombuffer(raw, dtype=np.int16))) / 327.67)
-        self.pcm_in.put(raw)
-
     def _capture_mic(self, device, stop: threading.Event) -> None:
-        # Linux's explicit ALSA devices are commonly rate-locked to 48 kHz.
-        # PortAudio devices on Windows/macOS can normally open at the wire
-        # rate directly, so do not apply the ALSA workaround there.
-        if device is None or os.name != "posix":
-            rate, resample = IN_RATE, False
-        else:
-            rate, resample = 48_000, True
+        rate, resample = (IN_RATE, False) if device is None or os.name != "posix" else (48_000, True)
 
         def on_audio(indata, frames, time_info, status):
             raw = bytes(indata)
@@ -817,57 +678,40 @@ class ClientUI(App[None]):
                 try:
                     raw = _resample_to_16k(raw)
                 except Exception as exc:
-                    self._proc_err = repr(exc)
+                    self._proc_err = str(exc)
                     return
-            self._on_pcm16(raw)
+            values = np.frombuffer(raw, dtype=np.int16)
+            if values.size:
+                self._in_pct = int(np.max(np.abs(values)) / 327.67)
+            self.pcm_in.put(raw)
 
-        stream = sd.RawInputStream(
-            samplerate=rate,
-            channels=1,
-            dtype="int16",
-            blocksize=int(rate * SLICE_MS / 1000),
-            callback=on_audio,
-            device=device,
-        )
-        with stream:
-            while not stop.is_set():
-                sd.sleep(50)
+        try:
+            stream = sd.RawInputStream(samplerate=rate, channels=1, dtype="int16",
+                                       blocksize=int(rate * SLICE_MS / 1000),
+                                       callback=on_audio, device=device)
+            with stream:
+                while not stop.is_set():
+                    sd.sleep(50)
+        except Exception as exc:
+            self._proc_err = str(exc)
 
     def _capture_monitor(self, monitor_source: str, stop: threading.Event) -> None:
-        """Record a sink monitor via ``parec`` and stream 16 kHz mono PCM.
-
-        Unlike proc-tap this never moves or corks the app's stream -- it just
-        taps the sink the audio is already playing to, so playback is
-        uninterrupted.  ``parec`` delivers 48 kHz stereo s16; we downmix to
-        mono and resample to 16 kHz with soxr (matching the wire format)."""
-        if os.name == "nt":
-            self._proc_err = "monitor capture is only available on Linux/PulseAudio"
-            return
         if soxr is None:
             self._proc_err = "soxr required for monitor capture"
             return
-        proc = subprocess.Popen(
-            [
-                "parec",
-                "--device=%s" % monitor_source,
-                "--format=s16le",
-                "--rate=48000",
-                "--channels=2",
-            ],
-            stdout=subprocess.PIPE,
-        )
-        block = int(48_000 * SLICE_MS / 1000) * 2 * 2  # 20 ms stereo s16 bytes
+        proc = subprocess.Popen(["parec", f"--device={monitor_source}", "--format=s16le",
+                                 "--rate=48000", "--channels=2"], stdout=subprocess.PIPE)
+        block = int(48_000 * SLICE_MS / 1000) * 4
         try:
             while not stop.is_set():
                 raw = proc.stdout.read(block)
                 if not raw:
                     break
-                x = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-                n = x.size - (x.size % 2)
-                mono = x[:n].reshape(-1, 2).mean(axis=1)
-                mono16 = soxr.resample(mono, 48_000, IN_RATE)
-                pcm = (np.clip(mono16, -1.0, 1.0) * 32767).astype(np.int16)
-                self._on_pcm16(pcm.tobytes())
+                values = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+                count = values.size - values.size % 2
+                mono = values[:count].reshape(-1, 2).mean(axis=1)
+                output = soxr.resample(mono, 48_000, IN_RATE)
+                self.pcm_in.put((np.clip(output, -1, 1) * 32767).astype(np.int16).tobytes())
         finally:
             proc.terminate()
             try:
@@ -875,147 +719,102 @@ class ClientUI(App[None]):
             except Exception:
                 proc.kill()
 
-    def _capture_proc(self, pid: int, stop: threading.Event) -> None:
-        def on_data(pcm_bytes, frames):
-            try:
-                data = _proc_to_pcm16(pcm_bytes)
-            except Exception as exc:
-                self._proc_err = repr(exc)
-                return
-            if data:
-                self._on_pcm16(data)
-
-        tap = ProcessAudioCapture(pid, on_data=on_data)
-        try:
-            tap.start()
-        except Exception as exc:
-            self._proc_err = repr(exc)
-            return
-        try:
-            while not stop.is_set():
-                sd.sleep(50)
-        finally:
-            tap.stop()
-
     def _play(self) -> None:
-        """Drain decoded PCM chunks out the speakers, reopening on change.
-
-        ``_play`` polls the current output device + sample rate every
-        iteration so a dropdown swap is picked up even with no audio
-        pending; portaudio is never stopped mid-``stream.write`` because
-        we only stop between frames here (and join before kill in
-        ``_stop_audio``)."""
-        key = None
         stream = None
-
-        def _open() -> None:
-            nonlocal key, stream
-            # a chosen output opens its PortAudio device index directly;
-            # None (default / mix) follows the PipeWire active default.
-            dev = self._out_dev
-            rate = self.out_rate[0]
-            new_key = (dev, rate)
-            if stream is not None and key != new_key:
-                stream.stop()
-                stream.close()
-                stream = None
-            if stream is None:
-                stream = sd.OutputStream(
-                    samplerate=rate, channels=1, dtype="float32", device=dev
-                )
-                stream.start()
-                key = new_key
-
-        while not self._stop.is_set():
-            _open()
-            if self._mute_out:
-                # drop rather than play; keep the stream open for instant unmute
+        key = None
+        try:
+            while not self._stop.is_set():
+                new_key = (self._out_dev, self._out_rate[0])
+                if stream is None or key != new_key:
+                    if stream is not None:
+                        stream.stop(); stream.close()
+                    stream = sd.OutputStream(samplerate=new_key[1], channels=1,
+                                             dtype="float32", device=new_key[0])
+                    stream.start(); key = new_key
+                if self._mute_out:
+                    try:
+                        self.pcm_out.get_nowait()
+                    except queue.Empty:
+                        pass
+                    sd.sleep(20)
+                    continue
                 try:
-                    self.pcm_out.get_nowait()
+                    samples = self.pcm_out.get_nowait()
                 except queue.Empty:
-                    pass
-                sd.sleep(20)
-                continue
-            try:
-                x = self.pcm_out.get_nowait()
-            except queue.Empty:
-                sd.sleep(20)
-                continue
-            stream.write(np.asarray(x, dtype=np.float32))
-        if stream is not None:
-            stream.stop()
-            stream.close()
+                    sd.sleep(20)
+                    continue
+                stream.write(np.asarray(samples, dtype=np.float32))
+        except Exception as exc:
+            self._proc_err = str(exc)
+        finally:
+            if stream is not None:
+                stream.stop(); stream.close()
 
-    # ---- rendering ----
+    # ---- rendering and shutdown ------------------------------------------
     @staticmethod
-    def _turn_text(turn: list[str]) -> str:
-        return " ".join(t for t in turn if t)
+    def _turn_text(turn):
+        return " ".join(part for part in turn if part)
 
     def _render_transcribed(self) -> None:
-        # committed speech (already sent to translation) renders white; the
-        # in-progress whisper partial renders dim/gray so it's clearly "not
-        # sent yet". Finished turns and the current turn's finals are each
-        # their own block; the live partial trails the current turn inline.
-        segs: list[list[tuple[str, str]]] = []
-        for turn in self._t_turns:
-            txt = self._turn_text(turn)
-            if txt:
-                segs.append([(txt, "white")])
-        cur: list[tuple[str, str]] = []
-        if self._t_current:
-            cur.append((" ".join(self._t_current), "white"))
-        if self._t_partial:
-            cur.append((self._t_partial, "dim"))
-        if cur:
-            segs.append(cur)
-        text = Text()
-        for bi, block in enumerate(segs):
-            if bi:
-                text.append("\n\n")
-            for ci, (s, style) in enumerate(block):
-                if ci:
-                    text.append(" ")
-                text.append(s, style=style)
-        self.transcribed.update(text if segs else "… waiting for speaker")
-        self._scroll_end()
+        blocks = [self._turn_text(turn) for turn in self._t_turns if self._turn_text(turn)]
+        current = " ".join(filter(None, [self._turn_text(self._t_current), self._t_partial]))
+        if current:
+            blocks.append(current)
+        value = "\n\n".join(blocks)
+        self._replace_text(
+            self.transcribed, value or "Waiting for speaker...",
+            placeholder=not value, gray_text=self._t_partial,
+        )
 
     def _render_translated(self) -> None:
-        # finished translations (already spoken as TTS) render white; the
-        # in-progress LLM translation (not yet spoken) renders dim/gray.
-        segs: list[list[tuple[str, str]]] = []
-        for turn in self._l_turns:
-            txt = self._turn_text(turn)
-            if txt:
-                segs.append([(txt, "white")])
-        cur_txt = self._turn_text(self._l_current)
-        if cur_txt:
-            segs.append([(cur_txt, "dim")])
-        text = Text()
-        for bi, block in enumerate(segs):
-            if bi:
-                text.append("\n\n")
-            for ci, (s, style) in enumerate(block):
-                if ci:
-                    text.append(" ")
-                text.append(s, style=style)
-        self.translated.update(text if segs else "…")
-        self._scroll_end()
+        blocks = [self._turn_text(turn) for turn in self._l_turns if self._turn_text(turn)]
+        current = self._turn_text(self._l_current)
+        if current:
+            blocks.append(current)
+        value = "\n\n".join(blocks)
+        self._replace_text(
+            self.translated, value or "Waiting for translation...",
+            placeholder=not value, gray_text=current,
+        )
 
-    def _scroll_end(self) -> None:
-        for wrap in (
-            self.query_one("#wrap-transcribed", VerticalScroll),
-            self.query_one("#wrap-translated", VerticalScroll),
-        ):
-            wrap.scroll_end(animate=False)
+    @staticmethod
+    def _replace_text(widget: tk.Text, value: str, placeholder: bool = False,
+                      gray_text: str = "") -> None:
+        widget.configure(state="normal")
+        widget.delete("1.0", "end")
+        if placeholder:
+            widget.insert("1.0", value, "placeholder")
+        else:
+            widget.insert("1.0", value)
+            if gray_text:
+                start = len(value) - len(gray_text)
+                widget.tag_add("gray", f"1.0 + {start} chars", "end-1c")
+        widget.see("end")
+        widget.configure(state="disabled")
 
-    def _tick(self) -> None:
-        self._tick_n += 1
-        if self._tick_n % max(1, int(REFRESH_DEVICES_S / REFRESH_S)) == 0:
-            self._refresh_options()
+    def _refresh_status(self) -> None:
+        self.level_var.set(f"Input level  {min(100, self._in_pct):3d}%")
+        if self._proc_err:
+            self.footer_var.set(self._proc_err)
+        if not self._quitting:
+            self.after(500, self._refresh_status)
 
-    def action_quit(self) -> None:
+    def close(self) -> None:
+        if self._quitting:
+            return
         self._quitting = True
-        if self._session_task is not None:
-            self._session_task.cancel()
         self._stop_audio()
-        self.exit()
+        if self._loop and self._loop.is_running() and self._client:
+            asyncio.run_coroutine_threadsafe(self._client.close(), self._loop)
+        if self._session_thread:
+            self._session_thread.join(timeout=2.0)
+        self._stop_server(wait=True)
+        self.destroy()
+
+
+def run_client_ui(url: str, language: str, device=None, out_device=None) -> None:
+    app = ClientUI(url, language, device, out_device)
+    try:
+        app.mainloop()
+    except KeyboardInterrupt:
+        app.close()

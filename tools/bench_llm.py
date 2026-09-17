@@ -1,11 +1,9 @@
 """Token-speed and latency benchmark for the LLM translation endpoint.
 
-Targets an OpenAI-compatible /v1 endpoint (vLLM / llama.cpp / ollama shim)
-exactly like the live `engine/llm.py` LlmStage: streamed SSE, sentence-sized
-chunks, one request per speech window. In the live pipeline the gate releases
-text to the LLM once `gate.release_words` (5) source words accumulate or the
-speaker pauses (`gate.gap_reset_s`), so each request approximates a short
-speech window rather than one request per ASR sentence utterance.
+Targets the configured OpenAI-compatible /v1 endpoint (vLLM / llama.cpp /
+ollama shim) exactly like the live `engine/llm.py` LlmStage: streamed SSE,
+sentence-sized chunks, one request per speech window. Runtime model and LLM
+settings come from `config.toml`.
 
 Usage:
     .venv/bin/python tools/bench_llm.py [max_windows] [seconds_per_window] [runs] [target_language]
@@ -30,12 +28,9 @@ import httpx
 
 logging.disable(logging.CRITICAL)
 sys.path.insert(0, ".")
-from engine.llm import _token_text  # noqa: E402
+from engine.config import load_config  # noqa: E402
+from engine.llm import LlmStage, _token_text  # noqa: E402
 
-BASE_URL = "http://xavier:8081/v1"
-MODEL = "Qwen/Qwen3-8B-AWQ"
-TEMPERATURE = 0.3
-MAX_TOKENS = 256
 TIMEOUT = 120
 # Input side: how long of a speech window each translation request covers
 # (the live gate releases after ~release_words words or a pause; this is the
@@ -43,7 +38,6 @@ TIMEOUT = 120
 WINDOW_SECONDS = 5.0
 # Prior source window and its translation, fed to the model so it can
 # continue the translation seamlessly.
-CONTEXT_WINDOWS = 1
 # English conversational speech ~150 wpm -> ~15 chars/s, incl. spaces.
 SPEECH_CHARS_PER_SEC = 15.0
 # Output side: sentence-chunk size used when flushing streamed tokens,
@@ -52,10 +46,14 @@ MAX_CHUNK_CHARS = 180
 
 _SENTENCE_END = ".!?\n"
 
-SYSTEM = (
-    "Bạn là một phiên dịch viên cabin. Dịch tiếp câu sau sao cho tự nhiên "
-    "và khớp với ngữ điệu, chỉ viết phần bổ sung thêm, không markdown."
-)
+CFG = load_config()
+LLM_CFG = CFG.llm
+BASE_URL = LLM_CFG.base_url
+MODEL = LLM_CFG.model
+TEMPERATURE = LLM_CFG.temperature
+MAX_TOKENS = LLM_CFG.max_tokens
+CONTEXT_MESSAGES = max(0, LLM_CFG.context_messages)
+SYSTEM = LlmStage.SYSTEM
 
 # Full source transcript (headers/speaker labels already stripped, matching
 # what the ASR stage would actually emit for translation).
@@ -365,21 +363,25 @@ async def main():
 
     system = SYSTEM + f" Ngôn ngữ cần dịch đến: {target_language}."
 
-    def build_messages(prev, u):
-        msgs = [{"role": "system", "content": system}]
-        if prev is not None:
-            msgs.append({"role": "user", "content": prev[0]})
-            if prev[1]:
-                msgs.append({"role": "assistant", "content": prev[1]})
-        msgs.append({"role": "user", "content": u})
-        return msgs
+    def build_messages(previous_translations, u):
+        system_content = system
+        if previous_translations and CONTEXT_MESSAGES:
+            system_content += (
+                "\n\nCác câu đã dịch gần đây (chỉ dùng để giữ mạch văn; "
+                "không nhắc lại chúng):\n- "
+                + "\n- ".join(previous_translations[-CONTEXT_MESSAGES:])
+            )
+        return [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": u},
+        ]
 
     log_path = "bench_llm.log"
     logf = open(log_path, "a", encoding="utf-8")
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     logf.write("\n===== run %s | %s -> %s | model=%s | windows=%d x %.1fs | ctx=%d =====\n"
                % (stamp, "en", target_language, MODEL, len(windows), seconds_per_window,
-                  CONTEXT_WINDOWS))
+                  CONTEXT_MESSAGES))
     logf.flush()
 
     print("source : %s (%d chars)" % (SOURCE["title"], len(SOURCE["text"])))
@@ -391,9 +393,9 @@ async def main():
         for run in range(n_runs):
             print("\n=== run %d ===" % run)
             per = []
-            prev = None  # (source, translation) of the last window
+            previous_translations = []
             for i, u in enumerate(windows):
-                messages = build_messages(prev, u)
+                messages = build_messages(previous_translations, u)
                 p = await bench_utterance(client, messages, target_language)
                 per.append(p)
                 print("  #%02d prompt:" % i)
@@ -407,7 +409,8 @@ async def main():
                     logf.write("[%02d]   <%s> %s\n" % (i, m["role"], m["content"]))
                 logf.write("[%02d] out: %s\n" % (i, p["out"].strip()))
                 logf.flush()
-                prev = (u, p["out"])
+                if p["out"].strip():
+                    previous_translations.append(p["out"].strip())
             n_tok_total = sum(p["n_tokens"] for p in per)
             wall_total = sum(p["wall"] for p in per) / 1000.0
             tok_total_s = n_tok_total / wall_total if wall_total > 0 else float("nan")

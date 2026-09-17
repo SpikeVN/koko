@@ -29,9 +29,10 @@ shared `Bus`:
                                       ▼
                             ┌─────────────────────┐
                             │ Interpretation gate │  buffers text; fires a
-                            │  (every 5 words or  │  burst to the LLM once
-                            │  a 1.2 s pause)     │  release_words hit, or a
-                            └─────────┬───────────┘  pause ends the utterance
+                             │  (every 8 words,    │  burst to the LLM once
+                             │  pause, or 2 s ASR  │  release_words hit, pause
+                             │  stall)             │  ends, or ASR stalls
+                             └─────────┬───────────┘
                             └─────────┬───────────┘
                                       ▼
                             ┌─────────────────────┐
@@ -55,7 +56,7 @@ Stages and files:
 | ASR | `engine/asr.py` | streaming Whisper via a separate WhisperLive server (`whisper_live_url`) |
 | Gate | `engine/gate.py` | decides *when* buffered transcript goes to the LLM |
 | LLM | `engine/llm.py` | streaming translation; groups tokens into sentences |
-| TTS | `engine/tts.py`, `engine/tts_vieneu.py`, `engine/tts_gwen.py` | VieNeu-TTS via local ONNX, or Gwen-TTS voice cloning via Qwen3-TTS |
+| TTS | `engine/tts.py`, `engine/tts_vieneu.py` | VieNeu-TTS via local ONNX, or null dry-run output |
 | phonemes | `engine/phonemize.py` | remote G2P client (text → phonemes over HTTP) |
 | server | `koko/server.py` | hosts the whole pipeline on port 6942 |
 | reference client | `koko/client.py` | streams mic audio, plays returned TTS |
@@ -81,13 +82,13 @@ Stages and files:
    vars. The important sections:
 
    - `[llm]` `base_url` / `model` — any OpenAI-compatible server
-    - `[tts]` `backend` (`vieneu` / `gwen` / `null`), `vieneu_voice` — voice selection. Set `vieneu_voices_path` to use another compatible preset JSON. Gwen needs `uv sync --group gwen`, plus either `gwen_data_path` and `gwen_speaker`, or `gwen_ref_audio` and `gwen_ref_text`.
+     - `[tts]` `backend` (`vieneu` / `null`), `vieneu_voice` — voice selection. Set `vieneu_voices_path` to use another compatible preset JSON.
    - `[asr]` `whisper_live_url` / `whisper_live_model` / `whisper_live_vad` —
      WhisperLive server endpoint + client handshake facts (only ASR engine);
      `whisper_live_host/_port/_backend/_max_clients/_max_connection_s` —
      how the switchless `koko/whisper_live_server.py` is launched
    - `[phonemize]` `url` — phonemizer HTTP endpoint (box: `tools/phonemize_server.py`)
-   - `[gate]` `release_words` / `gap_reset_s` — when the translation fire
+     - `[gate]` `release_words` / `gap_reset_s` / `no_new_words_s` — when translation fires
 
    Run the server with a per-machine config when URLs differ:
 
@@ -119,7 +120,7 @@ Stages and files:
 
    ```bash
    uv run koko-server              # starts local phonemizer + WhisperLive as needed
-    uv run koko-client              # client: mic → server → speakers
+   uv run koko-client              # Tkinter client: mic → server → speakers
    ```
 
 ## Quick facts

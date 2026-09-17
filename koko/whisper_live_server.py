@@ -11,6 +11,8 @@ from __future__ import annotations
 import logging
 import os
 import argparse
+import sys
+from pathlib import Path
 
 from engine.config import load_config
 
@@ -26,6 +28,12 @@ def main() -> None:
 
     cfg = load_config(args.config).asr
 
+    # The repository bootstrap script is named ``whisper_live.py``.  The
+    # service runs from the repository root, so that file would shadow the
+    # third-party ``whisper_live`` package installed in the isolated venv.
+    root = Path(__file__).resolve().parents[1]
+    sys.path[:] = [entry for entry in sys.path
+                   if Path(entry or ".").resolve() != root]
     from whisper_live.server import TranscriptionServer
 
     server = TranscriptionServer()

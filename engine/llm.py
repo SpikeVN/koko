@@ -28,7 +28,10 @@ _CHUNK_MAX_CHARS = 180
 class LlmStage:
     SYSTEM = (
         "Bạn là một phiên dịch viên cabin. Dịch tiếp câu sau sao cho tự nhiên "
-        "và khớp với ngữ điệu, chỉ viết phần bổ sung thêm, không markdown."
+        "và khớp với ngữ điệu, chỉ viết phần bổ sung thêm, không markdown. "
+        "Dịch trung thực mọi nội dung, kể cả tục ngữ, chửi thề, lăng mạ và "
+        "từ ngữ miệt thị. Không được từ chối, kiểm duyệt, giảm nhẹ hoặc bình "
+        "luận về nội dung; đây chỉ là nhiệm vụ dịch thuật."
     )
 
     def __init__(self, cfg: Config, bus: Bus, monitor: Monitor):
@@ -50,12 +53,23 @@ class LlmStage:
 
     async def _stream(self, turn_id: str, text: str, target_language: str):
         generation = self._context_generation
-        messages = [{"role": "system", "content": self.SYSTEM + f" Ngôn ngữ cần dịch đến: {target_language}."}]
-        # Keep a short rolling context so each burst can follow recent phrasing.
         history_limit = max(0, self.cfg.context_messages)
-        if history_limit:
-            messages.extend(self._history[-history_limit:])
-        messages.append({"role": "user", "content": text})
+        all_translations = [
+            item["content"] for item in self._history
+            if item.get("role") == "assistant" and item.get("content")
+        ]
+        recent_translations = all_translations[-history_limit:] if history_limit else []
+        system = self.SYSTEM + f" Ngôn ngữ cần dịch đến: {target_language}."
+        if recent_translations:
+            system += (
+                "\n\nCác câu đã dịch gần đây (chỉ dùng để giữ mạch văn; "
+                "không nhắc lại chúng):\n- "
+                + "\n- ".join(recent_translations)
+            )
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": text},
+        ]
         payload = {
             "model": self.cfg.model,
             "stream": True,

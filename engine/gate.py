@@ -4,8 +4,10 @@ Releases the buffered transcript on EITHER trigger:
 
 * enough words accumulated — once the buffered source reaches
   `gate.release_words` (e.g. 5), a burst is sent to the LLM; or
-* a pause — continuous silence longer than `gate.gap_reset_s`
+ * a pause — continuous silence longer than `gate.gap_reset_s`
   while anything is buffered ends the utterance and releases early.
+* a stalled transcript — no new finalized words for `gate.no_new_words_s`
+  releases buffered text even while the speaker remains active.
 
 Word counting uses `.split()` for space-delimited languages. For Japanese,
 Chinese, and Korean, script characters are counted instead because those
@@ -43,12 +45,14 @@ class InterpretationGate:
     def __init__(self, cfg: Config, bus: Bus, monitor: Monitor):
         self.release_words = max(1, cfg.gate.release_words)
         self.gap = cfg.gate.gap_reset_s
+        self.no_new_words = max(0.0, cfg.gate.no_new_words_s)
         self.language = cfg.asr.language
         self.bus = bus
         self.monitor = monitor
         self.silence_secs = 0.0    # continuous silence in AUDIO time
         self.speaking = False
         self.buffer: list[str] = []
+        self.last_text_at: float | None = None
 
     def on_voice(self, active: bool, dur_s: float) -> None:
         """Track speech/silence in *audio time*, not wall-clock spacing.
@@ -67,6 +71,7 @@ class InterpretationGate:
     def on_asr_text(self, ev: Event) -> None:
         if ev.text:
             self.buffer.append(ev.text)
+            self.last_text_at = time.monotonic()
 
     def set_language(self, language: str) -> None:
         if isinstance(language, str) and language:
@@ -77,6 +82,7 @@ class InterpretationGate:
         self.buffer.clear()
         self.silence_secs = 0.0
         self.speaking = False
+        self.last_text_at = None
 
     def maybe_fire(self, now: float) -> Event | None:
         """Return a SPEAK event if the buffer should go to the LLM now.
@@ -96,9 +102,12 @@ class InterpretationGate:
         else:
             cjk_chars = sum(_is_cjk(ch) for ch in text)
             units = cjk_chars if cjk_chars else len(text.split())
-        if self.silence_secs >= self.gap or units >= self.release_words:
+        stalled = (self.no_new_words > 0 and self.last_text_at is not None
+                   and now - self.last_text_at >= self.no_new_words)
+        if self.silence_secs >= self.gap or units >= self.release_words or stalled:
             self.buffer.clear()
             self.silence_secs = 0.0
+            self.last_text_at = None
             return Event(
                 kind=Kind.SPEAK,
                 turn_id=f"u{now:.0f}",
@@ -135,7 +144,14 @@ class InterpretationGate:
                 if fire is not None:
                     await self.bus.publish(fire)
 
-        await asyncio.gather(voice_loop(), text_loop())
+        async def stall_loop():
+            while not stop.is_set():
+                await asyncio.sleep(0.1)
+                fire = self.maybe_fire(time.monotonic())
+                if fire is not None:
+                    await self.bus.publish(fire)
+
+        await asyncio.gather(voice_loop(), text_loop(), stall_loop())
 
 
 async def _get(q: asyncio.Queue, stop: asyncio.Event) -> Event | None:

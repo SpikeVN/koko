@@ -2,7 +2,6 @@
 
 TtsBackend: anything that turns text -> np.ndarray[float32] audio.
   * VieneuTts  -- local vieneu-tts model (pointed at its import path / weights)
-  * GwenTts    -- Gwen-TTS Qwen3 voice-cloning model
   * NullTts    -- drops audio (offline testing / speech-free dry runs)
 
 Playback lives in `AudioPlayer`, a queue of sentence-waveforms drained
@@ -123,22 +122,6 @@ class VieneuTts(TtsBackend):
 
     async def close(self) -> None:
         await self._phonemizer.close()
-
-
-class GwenTts(TtsBackend):
-    """Gwen-TTS inference in a worker thread so its Torch work cannot block asyncio."""
-
-    def __init__(self, cfg: Config):
-        from engine.tts_gwen import GwenTts as GwenEngine
-
-        self._engine = GwenEngine(cfg)
-        self.sample_rate = self._engine.sample_rate
-
-    async def speak(self, text: str) -> np.ndarray:
-        loop = asyncio.get_running_loop()
-        wav = await loop.run_in_executor(None, self._engine.synth, text)
-        self.sample_rate = self._engine.sample_rate
-        return wav
 
 
 class TtsStage:

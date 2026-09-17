@@ -38,7 +38,7 @@ serialized to binary websocket frames.
   `AudioPlayer` = local speakers. Used for benching / offline testing.
 - `koko/server.py` — the thing you actually run; protocol documented in
   `CLIENT.md` and the module docstring.
-- `koko/client.py` — reference client (mic → socket → playback).
+- `koko/client.py` — reference Tkinter client (mic → socket → playback).
 - `tools/` — model fetch, phonemize server, benches.
 
 ## Must-know invariants

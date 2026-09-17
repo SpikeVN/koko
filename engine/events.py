@@ -10,7 +10,7 @@ from enum import Enum
 
 class Kind(str, Enum):
     SOURCE_CHUNK = "source_chunk"    # raw audio block from the mic
-    SOURCE_SPEAKS = "source_speaks"  # speaker is active (drives the 5s gate)
+    SOURCE_SPEAKS = "source_speaks"  # speaker activity drives the gate
     PARTIAL_TEXT = "partial_text"    # provisional ASR output; display only
     FINAL_TEXT = "final_text"        # confirmed ASR output
     SPEAK = "speak"                  # gate -> LLM: interpret this

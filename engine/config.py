@@ -48,12 +48,12 @@ class LlmConfig:
     api_key: str = "dummy"          # llama-server ignores it; kept for parity
     temperature: float = 0.3
     max_tokens: int = 256
-    context_messages: int = 3       # prior conversation messages included per request
+    context_messages: int = 3       # prior translated sentences included in the system message
 
 
 @dataclass
 class TtsConfig:
-    backend: str = "vieneu"               # "vieneu" | "gwen" | "null"
+    backend: str = "vieneu"               # "vieneu" | "null"
     vieneu_voice: str = "Adam"              # preset voice name; "" = built-in default
     vieneu_model_path: str = ""         # empty = repo tts_model/ dir
     vieneu_voices_path: str = ""        # empty = <vieneu_model_path>/voices_v3_turbo.json
@@ -62,17 +62,6 @@ class TtsConfig:
     sample_rate: int = 48000            # VieNeu v3 Turbo emits 48 kHz
     greedy: bool = False                # temperature 0 (deterministic argmax path)
     execution_provider: str = "auto"    # "auto" | "cuda" | "cpu"
-    # Gwen-TTS (Qwen3-TTS) voice-cloning backend.
-    gwen_model_path: str = "g-group-ai-lab/gwen-tts-0.6B"
-    gwen_device: str = "cuda:0"
-    gwen_dtype: str = "bfloat16"
-    gwen_attention: str = "auto"        # "auto" | "flash_attention_2" | "sdpa"
-    gwen_language: str = "Vietnamese"
-    # Path to gwen-tts/data for a bundled speaker; empty uses a custom reference.
-    gwen_data_path: str = ""
-    gwen_speaker: str = "yen_nhi"
-    gwen_ref_audio: str = ""
-    gwen_ref_text: str = ""
 
 
 @dataclass
@@ -85,6 +74,7 @@ class GateConfig:
     # Space-delimited languages use words; CJK languages use script characters.
     release_words: int = 8   # release a translation burst after this many units
     gap_reset_s: float = 1.2    # silence gap > this, with text buffered, releases early
+    no_new_words_s: float = 2.0  # release if Whisper adds no finalized words this long
 
 
 @dataclass

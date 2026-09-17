@@ -37,7 +37,7 @@ from engine.events import Event, Kind
 from engine.gate import InterpretationGate
 from engine.llm import LlmStage
 from engine.monitor import Monitor
-from engine.tts import GwenTts, NullTts, VieneuTts
+from engine.tts import NullTts, VieneuTts
 from engine.tts import TtsStage
 
 log = logging.getLogger("koko.ws_server")
@@ -169,15 +169,13 @@ class WsServer:
         # so a config typo fails loudly instead of silently falling back.
         self.transcriber = WhisperLiveAsr(cfg)
         await self.transcriber.warmup()
-        tts_backends = ("vieneu", "gwen", "null")
+        tts_backends = ("vieneu", "null")
         if cfg.tts.backend not in tts_backends:
             raise ValueError("unknown tts backend %r; expected one of %s"
                              % (cfg.tts.backend, ", ".join(tts_backends)))
         if cfg.tts.backend == "vieneu":
             self.backend = VieneuTts(cfg)
             self.tts_voices = self.backend.list_voices()
-        elif cfg.tts.backend == "gwen":
-            self.backend = GwenTts(cfg)
         else:
             self.backend = NullTts()
         log.info("models ready")

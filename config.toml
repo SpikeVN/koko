@@ -88,6 +88,10 @@ release_words = 8
 # but too short makes the gate fire mid-thought over short pauses.
 gap_reset_s = 1.2
 
+# Release buffered text if Whisper produces no additional finalized words for
+# this long, even while the speaker remains active.
+no_new_words_s = 2.0
+
 [llm]
 # --- Translation LLM (OpenAI-compatible endpoint) -------------------------
 # Base URL of an OpenAI-compatible /v1 server (llama-server / vLLM / ollama
@@ -103,12 +107,12 @@ api_key = "dummy"
 temperature = 0.3
 # Max tokens per translation turn. ~256 covers a several-word burst fine.
 max_tokens = 256
-# Number of prior user/assistant messages included with each translation.
+# Number of prior translated sentences included in the system message.
 context_messages = 3
 
 [tts]
 # --- Text-to-speech backend ------------------------------------------------
-# "vieneu" | "gwen" | "null". Unknown values raise ValueError at startup.
+# "vieneu" | "null". Unknown values raise ValueError at startup.
 backend = "vieneu"
 
 # Preset voice name; exact (accented) string from the configured voice file's
@@ -128,7 +132,7 @@ vieneu_threads = 0
 # PortAudio output device index; omit (None) = system default output.
 # output_device = null   # (key left out on purpose)
 
-# VieNeu v3 Turbo emits 48 kHz audio. Gwen publishes its returned 24 kHz rate.
+# VieNeu v3 Turbo emits 48 kHz audio.
 sample_rate = 48000
 
 # Deterministic TTS: force temperature 0 (argmax sampling path). Byte-identical
@@ -139,23 +143,6 @@ greedy = false
 # auto = CUDA if the runtime libs load, else CPU. "cuda" fails loudly if CUDA
 # can't load; "cpu" forces CPU.
 execution_provider = "auto"
-
-# Gwen-TTS (Qwen3-TTS, GPU/torch) is installed separately with
-# `uv sync --group gwen`. Change `backend` to "gwen" to use it.
-gwen_model_path = "hf_cache/gwen-tts-0.6B"
-gwen_device = "cuda:0"
-gwen_dtype = "bfloat16"
-# "auto" uses FlashAttention 2 if installed, otherwise PyTorch SDPA.
-gwen_attention = "auto"
-gwen_language = "Vietnamese"
-
-# To use a bundled Gwen speaker, clone ggroup-ai-lab/gwen-tts and point this
-# at its data/ directory. Alternatively leave it empty and set both custom
-# reference fields below.
-gwen_data_path = "hf_cache/gwen-tts-0.6B/data"
-gwen_speaker = "yen_nhi"
-# gwen_ref_audio = "/path/to/reference.wav"
-# gwen_ref_text = "Transcript of the reference audio"
 
 [phonemize]
 # --- G2P endpoint (text -> phonemes) ---------------------------------------

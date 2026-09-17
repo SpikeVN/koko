@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import queue
-import sys
 import threading
 
 import numpy as np
@@ -149,9 +148,9 @@ def main() -> None:
                     help="list input devices and exit")
     ui = ap.add_mutually_exclusive_group()
     ui.add_argument("--ui", action="store_true",
-                    help="run the textual TUI (default when stdout is a TTY)")
+                    help="run the Tkinter desktop client (default)")
     ui.add_argument("--no-ui", action="store_true",
-                    help="headless client (no TUI)")
+                    help="headless client (no desktop window)")
     args = ap.parse_args()
 
     if args.list_devices:
@@ -222,10 +221,10 @@ def main() -> None:
         elif args.out_device is not None:
             out_device = int(args.out_device)
 
-    use_ui = args.ui or (not args.no_ui and sys.stdout.isatty())
+    use_ui = not args.no_ui
     if use_ui:
-        from .client_ui import ClientUI
-        ClientUI(args.url, args.language, device, out_device).run()
+        from .client_ui import run_client_ui
+        run_client_ui(args.url, args.language, device, out_device)
         return
 
     try:
