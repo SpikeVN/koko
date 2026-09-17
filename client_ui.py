@@ -36,7 +36,6 @@ import queue
 import shutil
 import subprocess
 import threading
-import time
 
 import numpy as np
 import sounddevice as sd
@@ -46,8 +45,8 @@ from rich.text import Text
 import client_devices as cdev
 
 from textual.app import App, ComposeResult
-from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Header, Rule, Select, Static
+from textual.containers import Grid, Horizontal, VerticalScroll
+from textual.widgets import Button, Header, Select, Static
 
 IN_RATE = 16_000
 OUT_RATE = 48_000
@@ -250,23 +249,19 @@ class ClientUI(App[None]):
 
     #info { row-span: 2; width: 46; }
 
-    #info-content { height: auto; padding: 0 1; }
-
     .cfg-label { padding: 1 1 0 1; text-style: bold; }
 
     .cfg-select { margin: 0 1; width: 100%; }
 
-    #mutes { margin: 0 1; height: auto; }
+    #mutes { width: auto; margin: 1 1; height: auto; }
 
-    /* keep the button label its normal colour on focus/hover/click -- no
-       white-contrast flip; muted buttons get a red tint instead. */
-    .mute { width: 1fr; background: $panel; color: $text; }
-    .mute:hover, .mute:focus {
-        background: $panel; color: $text;
-    }
-    .mute.muted, .mute.muted:hover, .mute.muted:focus {
-        background: $error 25%; color: $error; text-style: bold;
-    }
+    #mutes Button { width: 1fr; margin: 0; }
+
+    #mute-out { border-left: solid $primary; }
+
+    #auto-language { width: 1fr; margin: 1 1; }
+
+    #clear-context { width: 1fr; margin: 1 1; }
 
     #footer {
         dock: bottom;
@@ -292,9 +287,7 @@ class ClientUI(App[None]):
         with Grid(id="layout"):
             with VerticalScroll(id="wrap-transcribed", classes="panel"):
                 yield Static(id="transcribed")
-            with Vertical(id="info", classes="panel"):
-                yield Static(id="info-content")
-                yield Rule()
+            with VerticalScroll(id="info", classes="panel"):
                 yield Static(id="source-label", classes="cfg-label")
                 yield Select(
                     id="source-select",
@@ -307,7 +300,7 @@ class ClientUI(App[None]):
                     id="language-select", options=ASR_LANGUAGE_OPTIONS,
                     prompt="Whisper language", allow_blank=False,
                 )
-                yield Button("Auto detect: Off", id="auto-language", classes="mute")
+                yield Button("Auto detect: Off", id="auto-language", classes="mute", variant="primary")
                 yield Static(id="voice-label", classes="cfg-label")
                 yield Select(
                     id="voice-select", options=[("Loading voices...", "")],
@@ -315,17 +308,18 @@ class ClientUI(App[None]):
                 )
                 yield Static(id="out-label", classes="cfg-label")
                 yield Select(
-                    id="out-select", options=[("…", "…")], prompt="…", allow_blank=False
+                    id="out-select", options=[("…", "…")], prompt="…",
+                    allow_blank=False
                 )
                 with Horizontal(id="mutes"):
-                    yield Button("Mute input", id="mute-in", classes="mute")
-                    yield Button("Mute output", id="mute-out", classes="mute")
+                    yield Button("Mute input", id="mute-in", classes="mute", variant="primary")
+                    yield Button("Mute output", id="mute-out", classes="mute", variant="primary")
+                yield Button("Clear context", id="clear-context", classes="mute", variant="primary")
                 yield Static(id="footer")
             with VerticalScroll(id="wrap-translated", classes="panel"):
                 yield Static(id="translated")
 
     def on_mount(self) -> None:
-        self._t0 = time.monotonic()
         self._connected = False
         self._session_ready = False
         self._quitting = False
@@ -361,7 +355,6 @@ class ClientUI(App[None]):
 
         self.transcribed = self.query_one("#transcribed", Static)
         self.translated = self.query_one("#translated", Static)
-        self.info = self.query_one("#info-content", Static)
         self.transcribed.update("… waiting for speaker")
         self.translated.update("…")
 
@@ -377,7 +370,7 @@ class ClientUI(App[None]):
         # Only the two transcript panels are copyable: keep them selectable
         # (allow_select stays True) and opt every other static text out of the
         # mouse-selection/copy walk.
-        for sel_id in ("#info-content", "#source-label", "#language-label", "#voice-label", "#out-label", "#footer"):
+        for sel_id in ("#source-label", "#language-label", "#voice-label", "#out-label", "#footer"):
             self.query_one(sel_id, Static).ALLOW_SELECT = False
 
         # transcript: finished spoken turns + in-progress current turn/partial
@@ -516,12 +509,10 @@ class ClientUI(App[None]):
     async def _run_session(self) -> None:
         while True:
             self._conn_err = None
-            self._render_info()
             try:
                 async with websockets.connect(self.url, max_size=None) as ws:
                     self._ws = ws
                     self._connected = True
-                    self._render_info()
                     await ws.send(
                         json.dumps({
                             "type": "hello", "language": self._asr_language,
@@ -548,7 +539,6 @@ class ClientUI(App[None]):
                 self._connected = False
                 self._session_ready = False
                 self._ws = None
-                self._render_info()
 
             if self._quitting:
                 return
@@ -611,17 +601,13 @@ class ClientUI(App[None]):
                 self._set_asr_auto_detect(ctl["asr_auto_detect"])
             if "tts_voices" in ctl:
                 self._set_voice_options(ctl["tts_voices"], ctl.get("tts_voice"))
-            self._render_info()
         elif t == "asr_language":
             self._set_asr_language(ctl.get("language"))
             self._set_asr_auto_detect(ctl.get("asr_auto_detect", False))
-            self._render_info()
         elif t == "asr_auto_detect":
             self._set_asr_auto_detect(ctl.get("enabled"))
-            self._render_info()
         elif t == "tts_voice":
             self._tts_voice = ctl.get("voice")
-            self._render_info()
         elif t == "partial":
             self._t_partial = ctl.get("text", "") or ""
             self._render_transcribed()
@@ -647,7 +633,6 @@ class ClientUI(App[None]):
             self._render_translated()
         elif t == "error":
             self._conn_err = "server: %s" % ctl.get("detail")
-            self._render_info()
 
     # ---- audio capture (source switching) ----
     def on_select_changed(self, event: Select.Changed) -> None:
@@ -678,7 +663,6 @@ class ClientUI(App[None]):
                 asyncio.create_task(self._ws.send(json.dumps({
                     "type": "tts_voice", "voice": self._tts_voice,
                 })))
-        self._render_info()
 
     def _set_asr_language(self, language) -> None:
         """Reflect a server-confirmed language without sending another control."""
@@ -733,7 +717,20 @@ class ClientUI(App[None]):
                 asyncio.create_task(self._ws.send(json.dumps({
                     "type": "asr_auto_detect", "enabled": self._asr_auto_detect,
                 })))
-            self._render_info()
+            return
+        elif event.button.id == "clear-context":
+            self._t_turns.clear()
+            self._t_current.clear()
+            self._t_partial = ""
+            self._l_turns.clear()
+            self._l_current.clear()
+            self._render_transcribed()
+            self._render_translated()
+            if self._connected and self._ws is not None:
+                asyncio.create_task(self._ws.send(json.dumps({
+                    "type": "clear_context",
+                })))
+            self.notify("Context cleared")
             return
         else:
             return
@@ -742,7 +739,6 @@ class ClientUI(App[None]):
             self.query_one("#mute-in").set_class(self._mute_in, "muted")
         else:
             self.query_one("#mute-out").set_class(self._mute_out, "muted")
-        self._render_info()
 
     def action_copy_transcript(self) -> None:
         """Copy the current mouse text-selection (only transcript panels are
@@ -1009,61 +1005,6 @@ class ClientUI(App[None]):
         self._tick_n += 1
         if self._tick_n % max(1, int(REFRESH_DEVICES_S / REFRESH_S)) == 0:
             self._refresh_options()
-        self._render_info()
-
-    def _render_info(self) -> None:
-        up = time.monotonic() - self._t0
-        hrs, rem = divmod(int(up), 3600)
-        mins, secs = divmod(rem, 60)
-        state = (
-            "ready"
-            if self._session_ready
-            else "connected"
-            if self._connected
-            else "reconnecting…"
-        )
-        lines = [
-            "koko client",
-            f"server     {self.url}",
-            f"status     {state}",
-            f"whisper    {self._asr_language}" + (
-                " (auto detect)" if self._asr_auto_detect else ""),
-            f"uptime     {hrs:02d}:{mins:02d}:{secs:02d}",
-        ]
-        if self._conn_err:
-            lines += ["error", f"  {self._conn_err}"]
-        kind, value = self._source
-        if kind == "proc" and value is not None:
-            src_name = f"app [{value}]"
-        elif kind == "mon" and value is not None:
-            src_name = f"monitor: {self._monitor_labels.get(value, value)}"
-        elif kind == "mic" and value is not None:
-            src_name = next(
-                (d.name for d in self._pw_sources if d.dev_index == value),
-                f"mic [{value}]",
-            )
-        else:
-            src_name = "mic (default)"
-        if self._out_dev is not None:
-            out_name = next(
-                (d.name for d in self._pw_sinks if d.dev_index == self._out_dev),
-                f"device {self._out_dev}",
-            )
-        else:
-            out_name = "default (mix)"
-        src_line = f"source     {src_name}" + ("   [MUTED]" if self._mute_in else "")
-        out_line = f"output     {out_name}" + ("   [MUTED]" if self._mute_out else "")
-        lines += [
-            "",
-            src_line,
-            out_line,
-            f"in level   {self._in_pct:3d}%",
-            f"tx         {self._tx / 1024.0:,.1f} KB",
-            f"rx         {self._rx / 1024.0:,.1f} KB",
-        ]
-        if self._proc_err:
-            lines += ["", f"capture: {self._proc_err}"]
-        self.info.update("\n".join(lines))
 
     def action_quit(self) -> None:
         self._quitting = True

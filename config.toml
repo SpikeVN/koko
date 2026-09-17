@@ -103,6 +103,8 @@ api_key = "dummy"
 temperature = 0.3
 # Max tokens per translation turn. ~256 covers a several-word burst fine.
 max_tokens = 256
+# Number of prior user/assistant messages included with each translation.
+context_messages = 3
 
 [tts]
 # --- Text-to-speech backend ------------------------------------------------

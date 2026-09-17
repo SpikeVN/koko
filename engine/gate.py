@@ -25,6 +25,7 @@ from engine.events import Event, Kind
 from engine.monitor import Monitor
 
 log = logging.getLogger("koko.gate")
+_CJK_LANGUAGES = {"zh", "ja", "ko"}
 
 
 def _is_cjk(ch: str) -> bool:
@@ -42,6 +43,7 @@ class InterpretationGate:
     def __init__(self, cfg: Config, bus: Bus, monitor: Monitor):
         self.release_words = max(1, cfg.gate.release_words)
         self.gap = cfg.gate.gap_reset_s
+        self.language = cfg.asr.language
         self.bus = bus
         self.monitor = monitor
         self.silence_secs = 0.0    # continuous silence in AUDIO time
@@ -66,6 +68,16 @@ class InterpretationGate:
         if ev.text:
             self.buffer.append(ev.text)
 
+    def set_language(self, language: str) -> None:
+        if isinstance(language, str) and language:
+            self.language = language
+
+    def clear(self) -> None:
+        """Discard text from the previous source/context."""
+        self.buffer.clear()
+        self.silence_secs = 0.0
+        self.speaking = False
+
     def maybe_fire(self, now: float) -> Event | None:
         """Return a SPEAK event if the buffer should go to the LLM now.
 
@@ -78,8 +90,12 @@ class InterpretationGate:
         if not self.buffer:
             return None
         text = " ".join(self.buffer).strip()
-        cjk_chars = sum(_is_cjk(ch) for ch in text)
-        units = cjk_chars if cjk_chars else len(text.split())
+        language = self.language.lower().split("-", 1)[0].split("_", 1)[0]
+        if language in _CJK_LANGUAGES:
+            units = sum(not ch.isspace() for ch in text)
+        else:
+            cjk_chars = sum(_is_cjk(ch) for ch in text)
+            units = cjk_chars if cjk_chars else len(text.split())
         if self.silence_secs >= self.gap or units >= self.release_words:
             self.buffer.clear()
             self.silence_secs = 0.0

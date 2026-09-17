@@ -9,7 +9,7 @@ microphone audio, JSON frames are control.
 
 - **Client → server**: raw mono PCM16 microphone audio (16 kHz, ~20 ms
   per frame). No headers, no encoding envelope — the bytes ARE the audio.
-- **Client → server (control)**: `hello` / `asr_language` / `asr_auto_detect` / `tts_voice` / `bye` JSON frames.
+- **Client → server (control)**: `hello` / `asr_language` / `asr_auto_detect` / `tts_voice` / `clear_context` / `bye` JSON frames.
 - **Server → client**: TTS output as binary PCM16 frames (48 kHz), each
   preceded by a JSON `{"type": "audio", "rate": <Hz>}` header — **the
   client decodes and plays these locally**. The server does not play
@@ -38,6 +38,7 @@ microphone audio, JSON frames are control.
 | `asr_language` | `{"type": "asr_language", "language": "vi"}` | switch WhisperLive's language for the active session; it reconnects on the next active audio block |
 | `asr_auto_detect` | `{"type": "asr_auto_detect", "enabled": true}` | enable or disable Whisper language detection for the active session; disabled by default |
 | `tts_voice` | `{"type": "tts_voice", "voice": "Adam"}` | switch the active VieNeu preset for later speech; the selected name must be in `ready.tts_voices` |
+| `clear_context` | `{"type": "clear_context"}` | discard buffered source text and LLM conversation history |
 | `bye` | `{"type": "bye"}` | clean disconnect from server side |
 
 ### Server → client

@@ -252,6 +252,7 @@ class WsServer:
                 ctl = json.loads(msg)
                 if ctl.get("type") == "hello":
                     cfg.asr.language = ctl.get("language", cfg.asr.language)
+                    gate.set_language(cfg.asr.language)
                     auto_detect = ctl.get("asr_auto_detect", cfg.asr.auto_detect_language)
                     if isinstance(auto_detect, bool):
                         cfg.asr.auto_detect_language = auto_detect
@@ -267,6 +268,10 @@ class WsServer:
                     })
                 elif ctl.get("type") == "bye":
                     break
+                elif ctl.get("type") == "clear_context":
+                    gate.clear()
+                    llm.clear_context()
+                    await self._ctl(ws, {"type": "clear_context"})
                 elif ctl.get("type") == "tts_voice":
                     voice = ctl.get("voice")
                     if not isinstance(voice, str):
@@ -287,6 +292,7 @@ class WsServer:
                     else:
                         cfg.asr.language = language
                         cfg.asr.auto_detect_language = False
+                        gate.set_language(language)
                         await self._ctl(ws, {
                             "type": "asr_language", "language": language,
                             "asr_auto_detect": False,

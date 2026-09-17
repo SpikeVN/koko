@@ -48,6 +48,7 @@ class LlmConfig:
     api_key: str = "dummy"          # llama-server ignores it; kept for parity
     temperature: float = 0.3
     max_tokens: int = 256
+    context_messages: int = 3       # prior conversation messages included per request
 
 
 @dataclass

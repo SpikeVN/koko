@@ -36,8 +36,8 @@ class LlmStage:
         self.bus = bus
         self.monitor = monitor
         self._client = httpx.AsyncClient(base_url=self.cfg.base_url, timeout=120)
-        self._last_source: str | None = None
-        self._last_out: str = ""
+        self._history: list[dict[str, str]] = []
+        self._context_generation = 0
 
     async def run(self, stop: asyncio.Event, target_language: str = "tiếng Việt") -> None:
         q = self.bus.subscribe(Kind.SPEAK)
@@ -49,12 +49,12 @@ class LlmStage:
             await self._stream(ev.turn_id, ev.text, target_language)
 
     async def _stream(self, turn_id: str, text: str, target_language: str):
+        generation = self._context_generation
         messages = [{"role": "system", "content": self.SYSTEM + f" Ngôn ngữ cần dịch đến: {target_language}."}]
-        if self._last_source is not None:
-            # feed the previous window + its translation so the model continues seamlessly
-            messages.append({"role": "user", "content": self._last_source})
-            if self._last_out:
-                messages.append({"role": "assistant", "content": self._last_out})
+        # Keep a short rolling context so each burst can follow recent phrasing.
+        history_limit = max(0, self.cfg.context_messages)
+        if history_limit:
+            messages.extend(self._history[-history_limit:])
         messages.append({"role": "user", "content": text})
         payload = {
             "model": self.cfg.model,
@@ -82,14 +82,25 @@ class LlmStage:
                     buf += tok
                     full.append(tok)
                     if _ends_sentence(buf, _CHUNK_MAX_CHARS):
+                        if generation != self._context_generation:
+                            return
                         ch = Event(kind=Kind.ASSISTANT_CHUNK, turn_id=turn_id, text=buf.strip())
                         buf = ""
                         await self.bus.publish(ch)
+            if generation != self._context_generation:
+                return
             if buf.strip():
                 await self.bus.publish(Event(kind=Kind.ASSISTANT_CHUNK, turn_id=turn_id, text=buf.strip()))
-            self._last_source = text
-            self._last_out = "".join(full)
-            log.info("LLM answer (turn %s): %s", turn_id, self._last_out)
+            output = "".join(full)
+            self._history.extend([
+                {"role": "user", "content": text},
+                {"role": "assistant", "content": output},
+            ])
+            if history_limit:
+                self._history = self._history[-history_limit:]
+            else:
+                self._history.clear()
+            log.info("LLM answer (turn %s): %s", turn_id, output)
         except httpx.HTTPError as exc:
             log.exception("LLM stream failed")
             await self.bus.publish(
@@ -100,6 +111,10 @@ class LlmStage:
 
     async def close(self):
         await self._client.aclose()
+
+    def clear_context(self) -> None:
+        self._context_generation += 1
+        self._history.clear()
 
 
 def _token_text(data: str) -> str | None:
