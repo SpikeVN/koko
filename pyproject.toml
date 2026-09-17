@@ -20,5 +20,18 @@ dependencies = [
     "websockets>=17.1",
 ]
 
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["koko*", "engine*", "clients*"]
+
+[project.scripts]
+koko = "engine.pipeline:main"
+koko-client = "koko.client:main"
+koko-server = "koko.server:main"
+koko-whisper-server = "koko.whisper_live_server:main"
+
 [dependency-groups]
 jetson = []   # jetson/tooling-only; runtime deps pinned in requirements-jetson-py38.txt (py3.8)

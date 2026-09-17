@@ -1,6 +1,6 @@
-"""Minimal koko client: mic -> ws_server.py -> translated audio out.
+"""Minimal koko client: microphone -> websocket server -> translated audio.
 
-  python ws_client.py [ws://host:6942] [--language en]
+  uv run koko-client [ws://host:6942] [--language en]
 
 Sends raw mono PCM16 @ 16 kHz from the default mic; prints ASR status;
 plays PCM16 48 kHz TTS chunks out the speakers. ctrl-c to quit.
@@ -10,16 +10,15 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import queue
 import sys
 import threading
 
 import numpy as np
-import sounddevice as sd
 import websockets
-
-import client_devices as cdev
+import sounddevice as sd
+from . import client_devices as cdev
+from clients.koko_client import KokoAudio, KokoClient, KokoControl
 
 IN_RATE = 16_000
 OUT_RATE = 48_000
@@ -75,8 +74,9 @@ async def _amain(url: str, language: str, device, out_device) -> None:
     pcm_out: queue.SimpleQueue = queue.SimpleQueue()
     stop_evt = threading.Event()
 
-    async with websockets.connect(url, max_size=None) as ws:
-        await ws.send(json.dumps({"type": "hello", "language": language}))
+    client = KokoClient(url)
+    await client.connect(language)
+    try:
         capture_t = threading.Thread(target=_capture, args=(pcm_in, stop_evt, device), daemon=True)
         out_rate = [OUT_RATE]
         play_t = threading.Thread(target=_play, args=(pcm_out, stop_evt, out_rate, out_device),
@@ -102,26 +102,22 @@ async def _amain(url: str, language: str, device, out_device) -> None:
                 except queue.Empty:
                     continue
                 if raw:
-                    await ws.send(raw)
+                    await client.send_audio(raw)
 
         send_t = asyncio.ensure_future(_sender())
         try:
-            async for msg in ws:
-                if isinstance(msg, bytes):
-                    x = np.frombuffer(msg, dtype=np.int16).astype(np.float32) / 32768.0
-                    pcm_out.put(x)
+            async for msg in client.messages():
+                if isinstance(msg, KokoAudio):
+                    out_rate[0] = msg.rate
+                    pcm_out.put(msg.samples())
                     continue
-                ctl = json.loads(msg)
-                t = ctl.get("type")
-                if t == "audio":                # sample-rate header before pcm
-                    out_rate[0] = int(ctl.get("rate", OUT_RATE))
-                    continue
-                if t == "translation":
-                    print("[translation] %s" % ctl.get("text", ""), flush=True)
-                elif t == "speak":
-                    print("[speak] %s" % ctl.get("text", ""), flush=True)
-                elif t == "error":
-                    print("[server] %s" % ctl.get("detail"), flush=True)
+                assert isinstance(msg, KokoControl)
+                if msg.type == "translation":
+                    print("[translation] %s" % msg.data.get("text", ""), flush=True)
+                elif msg.type == "speak":
+                    print("[speak] %s" % msg.data.get("text", ""), flush=True)
+                elif msg.type == "error":
+                    print("[server] %s" % msg.data.get("detail"), flush=True)
         finally:
             stop_evt.set()
             try:
@@ -135,6 +131,8 @@ async def _amain(url: str, language: str, device, out_device) -> None:
                     break
             capture_t.join(timeout=1.0)
             play_t.join(timeout=1.0)   # portaudio segfaults if killed mid-write
+    finally:
+        await client.close()
 
 
 def main() -> None:
@@ -208,7 +206,7 @@ def main() -> None:
                      and args.device.lower() in d["name"].lower()]
             if not match:
                 ap.error("no input device matching %r; list with `python3 "
-                         "ws_client.py --list-devices`" % args.device)
+                          "koko-client --list-devices`" % args.device)
             device = match[0]
         elif args.device is not None:
             device = int(args.device)
@@ -219,14 +217,14 @@ def main() -> None:
                      and d["max_output_channels"] > 0]
             if not match:
                 ap.error("no output device matching %r; list with `python3 "
-                         "ws_client.py --list-devices`" % args.out_device)
+                          "koko-client --list-devices`" % args.out_device)
             out_device = match[0]
         elif args.out_device is not None:
             out_device = int(args.out_device)
 
     use_ui = args.ui or (not args.no_ui and sys.stdout.isatty())
     if use_ui:
-        from client_ui import ClientUI
+        from .client_ui import ClientUI
         ClientUI(args.url, args.language, device, out_device).run()
         return
 

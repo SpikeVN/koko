@@ -24,4 +24,4 @@ fi
 
 # Switchless: every ASR server setting (host, port, model, backend, max
 # clients, connection cap) lives in config.toml [asr].
-"$PY" whisper_live_server.py
+"$PY" -m koko.whisper_live_server

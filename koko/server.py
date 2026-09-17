@@ -12,7 +12,7 @@ time). Protocol on a single socket:
     {"type":"speak","text":...}              text being interpreted
     {"type":"ready"} / {"type":"error","detail":...}
 
-Run:  python ws_server.py [--config ./config.toml]
+Run:  uv run koko-server [--config ./config.toml]
 """
 
 from __future__ import annotations

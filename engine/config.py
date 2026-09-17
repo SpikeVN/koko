@@ -33,7 +33,7 @@ class AsrConfig:
     whisper_live_model: str = "deepdml/faster-whisper-large-v3-turbo-ct2"
     whisper_live_vad: bool = True                # suppresses non-speech before ASR
     whisper_live_same_output_threshold: int = 5  # balance stability and latency
-    # server process (no CLI switches; whisper_live_server.py reads these)
+    # WhisperLive server process (no CLI switches; koko.whisper_live_server reads these)
     whisper_live_host: str = "0.0.0.0"
     whisper_live_port: int = 9090
     whisper_live_backend: str = "faster_whisper"

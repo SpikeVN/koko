@@ -7,7 +7,7 @@
 #   * unknown sections/keys are rejected  (catches typos like `vietneu`)
 #   * wrong value types are rejected  (e.g. a float in an int field)
 # Run per-machine with a different file:
-#   uv run ws_server.py --config /path/to/machine.toml
+#   uv run koko-server --config /path/to/machine.toml
 #
 # Omitted keys fall back to the defaults shown here. `device`-style optional
 # integers (None = system default) are simply left out to mean "auto".
@@ -58,7 +58,7 @@ whisper_live_vad = true
 # lower values lock in unfinished hypotheses; the upstream default is 10.
 whisper_live_same_output_threshold = 5
 
-# --- whisper_live_server.py process knobs (no CLI switches) ---------------
+# --- koko.whisper_live_server process knobs (no CLI switches) --------------
 # These configure how the ASR server is launched by ./whisper-live.sh; they
 # live here so every ASR fact — client and server — has one source of truth.
 

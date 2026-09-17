@@ -57,8 +57,8 @@ Stages and files:
 | LLM | `engine/llm.py` | streaming translation; groups tokens into sentences |
 | TTS | `engine/tts.py`, `engine/tts_vieneu.py`, `engine/tts_gwen.py` | VieNeu-TTS via local ONNX, or Gwen-TTS voice cloning via Qwen3-TTS |
 | phonemes | `engine/phonemize.py` | remote G2P client (text → phonemes over HTTP) |
-| server | `ws_server.py` | hosts the whole pipeline on port 6942 |
-| reference client | `ws_client.py` | streams mic audio, plays returned TTS |
+| server | `koko/server.py` | hosts the whole pipeline on port 6942 |
+| reference client | `koko/client.py` | streams mic audio, plays returned TTS |
 
 ## Setup
 
@@ -85,14 +85,14 @@ Stages and files:
    - `[asr]` `whisper_live_url` / `whisper_live_model` / `whisper_live_vad` —
      WhisperLive server endpoint + client handshake facts (only ASR engine);
      `whisper_live_host/_port/_backend/_max_clients/_max_connection_s` —
-     how the switchless `whisper_live_server.py` is launched
+     how the switchless `koko/whisper_live_server.py` is launched
    - `[phonemize]` `url` — phonemizer HTTP endpoint (box: `tools/phonemize_server.py`)
    - `[gate]` `release_words` / `gap_reset_s` — when the translation fire
 
    Run the server with a per-machine config when URLs differ:
 
    ```bash
-   uv run ws_server.py --config /path/to/machine.toml
+    uv run koko-server --config /path/to/machine.toml
    ```
 
 4. **Check the machine** has the weights / GPU / services:
@@ -116,8 +116,8 @@ Stages and files:
 6. **Run:**
 
    ```bash
-   uv run ws_server.py            # server: :6942
-   uv run ws_client.py            # client: mic → server → speakers
+    uv run koko-server              # server: :6942
+    uv run koko-client              # client: mic → server → speakers
    ```
 
 ## Quick facts

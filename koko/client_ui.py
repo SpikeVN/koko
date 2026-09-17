@@ -23,7 +23,7 @@ The right ``info`` panel spans both rows and carries two live dropdowns:
 Picking a new device tears down and reopens just that audio stream; the
 websocket session keeps running.
 
-Run:  uv run ws_client.py [ws://host:6942] [--language en]   (TUI when TTY)
+Run:  uv run koko-client [ws://host:6942] [--language en]   (TUI when TTY)
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ import sounddevice as sd
 import websockets
 from rich.text import Text
 
-import client_devices as cdev
+from . import client_devices as cdev
 
 from textual.app import App, ComposeResult
 from textual.containers import Grid, Horizontal, VerticalScroll

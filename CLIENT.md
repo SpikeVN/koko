@@ -69,7 +69,7 @@ microphone audio, JSON frames are control.
 
 ## Reference implementations to copy from
 
-- **Python**: `ws_client.py` — captures mic via sounddevice, plays TTS
+- **Python**: `koko/client.py` — captures mic via sounddevice, plays TTS
   with sounddevice in a dedicated thread (see its `_play` function for
   the re-open-on-rate-change pattern, and `join()` before kill to avoid
   a portaudio segfault).

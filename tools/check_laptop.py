@@ -92,6 +92,6 @@ check("vieneu synth", tts)
 check("vieneu synth_stream", tts_stream)
 
 print()
-print("ALL OK — models ready; see config.toml and run main.py"
+print("ALL OK — models ready; see config.toml and run `uv run koko`"
       if ok else "SOME CHECKS FAILED")
 sys.exit(0 if ok else 1)

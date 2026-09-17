@@ -48,5 +48,5 @@ cat <<'EOF'
   # First point config.toml's [llm] at your Jetson:
   #   base_url = "http://<jetson-ip>:8081/v1"
   #   model    = "Qwen3.6-35B-A3B"
-  .venv-laptop/bin/python main.py
+  .venv-laptop/bin/python -m engine.pipeline
 EOF

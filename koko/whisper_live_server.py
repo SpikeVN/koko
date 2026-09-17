@@ -14,7 +14,7 @@ from engine.config import load_config
 
 logging.basicConfig(level=logging.INFO)
 
-if __name__ == "__main__":
+def main() -> None:
     # Avoid ctranslate2 spinning up a thread per core by default.
     os.environ.setdefault("OMP_NUM_THREADS", "1")
 
@@ -33,3 +33,7 @@ if __name__ == "__main__":
         max_clients=cfg.whisper_live_max_clients,
         max_connection_time=cfg.whisper_live_max_connection_s,
     )
+
+
+if __name__ == "__main__":
+    main()
