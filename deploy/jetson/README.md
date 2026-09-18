@@ -46,9 +46,9 @@ docker compose -f deploy/jetson/docker-compose.yml down
 The workflow `.github/workflows/build-jetson-images.yml` publishes
 `koko-server`, `koko-whisper`, and `koko-phonemize` as `linux/arm64` images to
 GHCR using the `jp5` and `latest` tags. Compose pulls the explicit `jp5` tag.
-It uses QEMU on GitHub's runner to execute ARM64 build steps. The GPU
-images remain tied to the Jetson-containers R35 base images and must match the
-host's L4T R35 ABI family.
+The workflow uses GitHub's native ARM64 runner, not QEMU. The GPU images remain
+tied to the Jetson-containers R35 base images and must match the host's L4T R35
+ABI family.
 
 The phonemizer does not use CUDA. Its Python 3.12 ARM64 base is intentional:
 `sea-g2p` requires Python 3.10+, while the JetPack 5 GPU images use Python 3.8.
