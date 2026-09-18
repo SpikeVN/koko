@@ -3,9 +3,12 @@ FROM ${BASE_IMAGE}
 
 WORKDIR /app
 
-# whisperx already contains Jetson-built faster-whisper/CTranslate2. Installing
-# WhisperLive without dependencies prevents pip from replacing it with x86/CUDA wheels.
-RUN python3 -m pip install --no-cache-dir tomli "whisper-live==0.10.0" --no-deps
+# JetPack 5's R35 images expose Python 3.8, while WhisperLive 0.10 declares
+# Python >=3.9. Its server code is usable here; bypass only the package
+# metadata check. Keep --no-deps so pip does not replace Jetson's
+# faster-whisper/CTranslate2/CUDA stack with incompatible wheels.
+RUN python3 -m pip install --no-cache-dir tomli \
+    --ignore-requires-python "whisper-live==0.10.0" --no-deps
 
 COPY engine/config.py ./engine/config.py
 COPY koko/whisper_live_server.py ./koko/whisper_live_server.py
