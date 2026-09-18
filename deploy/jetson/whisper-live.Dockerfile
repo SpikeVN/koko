@@ -10,6 +10,16 @@ WORKDIR /app
 RUN python3 -m pip install --no-cache-dir tomli \
     --ignore-requires-python "whisper-live==0.10.0" --no-deps
 
+# WhisperLive's --no-deps install above intentionally skips its dependency
+# resolver. Add only its HTTP/WebSocket runtime dependencies; the GPU/ML
+# dependencies must continue to come from the Jetson base image.
+RUN python3 -m pip install --no-cache-dir \
+    "fastapi==0.103.2" \
+    "uvicorn==0.23.2" \
+    "python-multipart==0.0.6" \
+    "websocket-client==1.6.4" \
+    "websockets==10.4"
+
 COPY engine/config.py ./engine/config.py
 COPY koko/whisper_live_server.py ./koko/whisper_live_server.py
 
