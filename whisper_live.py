@@ -11,6 +11,7 @@ import argparse
 
 ROOT = Path(__file__).resolve().parent
 VENV = ROOT / ".venv-whisperlive"
+REQUIREMENTS = ROOT / "deploy" / "jetson" / "requirements.whisper-live.txt"
 
 
 def python_executable() -> Path:
@@ -21,13 +22,24 @@ def provision() -> Path:
     python = python_executable()
     if not python.is_file():
         subprocess.run(
-            ["uv", "venv", "--python", "3.12", str(VENV)],
+            ["uv", "venv", "--python", "3.8", str(VENV)],
+            cwd=ROOT,
+            check=True,
+        )
+        subprocess.run(
+            ["uv", "pip", "install", "--python", str(python), "pip"],
+            cwd=ROOT,
+            check=True,
+        )
+        subprocess.run(
+            [str(python), "-m", "pip", "install", "--ignore-requires-python",
+             "--no-deps", "whisper-live==0.10.0", "faster-whisper==1.2.0"],
             cwd=ROOT,
             check=True,
         )
         subprocess.run(
             ["uv", "pip", "install", "--python", str(python),
-             "-r", "requirements-whisper-live.txt"],
+             "-r", str(REQUIREMENTS)],
             cwd=ROOT,
             check=True,
         )
@@ -46,6 +58,14 @@ def main() -> int:
     python = provision()
     if args.setup:
         return 0
+    site_packages = next((VENV / "lib").glob("python*/site-packages"))
+    cuda_libs = [
+        site_packages / "nvidia" / "cublas" / "lib",
+        site_packages / "nvidia" / "cudnn" / "lib",
+    ]
+    os.environ["LD_LIBRARY_PATH"] = ":".join(
+        [*(str(path) for path in cuda_libs), os.environ.get("LD_LIBRARY_PATH", "")]
+    )
     return subprocess.run(
         [str(python), "-m", "koko.whisper_live_server", "--config", args.config],
         cwd=ROOT,
