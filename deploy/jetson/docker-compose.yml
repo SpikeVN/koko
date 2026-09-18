@@ -2,6 +2,7 @@ name: koko
 
 services:
   websocket:
+    container_name: koko-server
     build:
       context: ../..
       dockerfile: deploy/jetson/websocket.Dockerfile
@@ -33,6 +34,7 @@ services:
       start_period: 90s
 
   whisper-live:
+    container_name: koko-whisper
     build:
       context: ../..
       dockerfile: deploy/jetson/whisper-live.Dockerfile
@@ -59,6 +61,7 @@ services:
       start_period: 90s
 
   phonemize:
+    container_name: koko-phonemize
     build:
       context: ../..
       dockerfile: deploy/jetson/phonemize.Dockerfile
