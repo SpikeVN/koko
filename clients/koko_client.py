@@ -33,11 +33,11 @@ Minimal usage::
         finally:
             await client.close()
 
-The receive loop should normally run for the entire session.  Audio and text
-events are interleaved, and failing to consume the websocket can prevent
-audio and control messages from being processed.  The server allows only one
-live session, so callers should reuse one connected instance rather than
-opening parallel connections.
+The receive loop should normally run for the entire session. Audio and text
+events are interleaved, and failing to consume the websocket can prevent audio
+and control messages from being processed. Each connected instance has an
+independent server-side session, so applications may use multiple clients with
+different settings concurrently.
 """
 
 from __future__ import annotations

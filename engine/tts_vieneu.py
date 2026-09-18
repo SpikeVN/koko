@@ -483,27 +483,39 @@ class VieneuLite:
 
     # -- non-streaming synthesis -------------------------------------------------
     def synth(self, phonemes: str, temperature: float = 0.8, top_k: int = 25,
-              top_p: float = 0.95, max_new_frames: int = 300,
-              repetition_penalty: float = 1.2,
-              repetition_window: int = DEFAULT_REP_WINDOW) -> np.ndarray:
+               top_p: float = 0.95, max_new_frames: int = 300,
+               repetition_penalty: float = 1.2,
+               repetition_window: int = DEFAULT_REP_WINDOW, voice: str | None = None
+               ) -> np.ndarray:
         """Phoneme text -> full 48 kHz waveform (float32, may be empty)."""
         frames = list(self.stream_frames(
             phonemes, temperature, top_k, top_p, max_new_frames,
-            repetition_penalty, repetition_window))
+            repetition_penalty, repetition_window, voice))
         if not frames:
             return np.zeros(0, dtype=np.float32)
         return self._decode_codes(np.stack(frames))
 
     # -- shared frame-generation loop (generator over (T, n_vq) frames) ----------
     def stream_frames(self, phonemes: str, temperature: float = 0.8,
-                      top_k: int = 25, top_p: float = 0.95,
-                      max_new_frames: int = 300, repetition_penalty: float = 1.2,
-                      repetition_window: int = DEFAULT_REP_WINDOW
-                      ) -> Generator[np.ndarray, None, None]:
+                       top_k: int = 25, top_p: float = 0.95,
+                       max_new_frames: int = 300, repetition_penalty: float = 1.2,
+                       repetition_window: int = DEFAULT_REP_WINDOW,
+                       voice: str | None = None
+                       ) -> Generator[np.ndarray, None, None]:
         """Yields (n_vq,) int frames as they are generated (frame level)."""
-        if self.voice is None:
+        if voice is None:
+            selected_voice = self.voice
+        elif voice not in self.presets:
+            raise ValueError("unknown voice %r; known: %s" % (voice, list(self.presets)))
+        else:
+            preset = self.presets[voice]
+            selected_voice = (
+                np.asarray(preset["speaker_emb"], dtype=np.float32),
+                np.asarray(preset["codes"], dtype=np.int64) if preset.get("codes") else None,
+            )
+        if selected_voice is None:
             raise RuntimeError("no voice selected (set_voice / default voice missing)")
-        speaker_emb, ref_codes = self.voice
+        speaker_emb, ref_codes = selected_voice
         anchor = self._speaker_anchor(speaker_emb)
         rows = self._build_rows(phonemes, ref_codes)
         prompt_embeds = self._embed_rows(rows, anchor)

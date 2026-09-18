@@ -11,9 +11,10 @@ synthesized PCM over the socket and never opens an output stream.
 
 ## Architecture
 
-One websocket connection per session (only one client at a time). Inside
-the server, the pipeline is a set of asyncio stages passing events over a
-shared `Bus`:
+Each websocket connection has its own session pipeline, so clients can use
+different ASR languages and TTS voices concurrently. Inside each session,
+asyncio stages pass events over a private `Bus`; the server shares loaded TTS
+model resources:
 
 ```
  client mic (PCM16 16 kHz)

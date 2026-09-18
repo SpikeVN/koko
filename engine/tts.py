@@ -82,20 +82,44 @@ class VieneuTts(TtsBackend):
         self.sample_rate = VieneuLite.SAMPLE_RATE
         log.info("vieneu (ONNX) loaded from %s (voice=%s)", self._model_path, self._voice)
 
-    async def speak(self, text: str) -> np.ndarray:
+    class Voice(TtsBackend):
+        """A connection-local voice over a shared VieNeu inference model."""
+
+        def __init__(self, parent: "VieneuTts", voice: str):
+            parent._validate_voice(voice)
+            self._parent = parent
+            self.voice = voice
+
+        @property
+        def sample_rate(self) -> int:
+            return self._parent.sample_rate
+
+        async def speak(self, text: str) -> np.ndarray:
+            return await self._parent.speak(text, self.voice)
+
+        def set_voice(self, voice: str) -> None:
+            self._parent._validate_voice(voice)
+            self.voice = voice
+
+    def for_voice(self, voice: str) -> "Voice":
+        """Create a per-session voice selector without duplicating ONNX state."""
+        return self.Voice(self, voice or self._voice)
+
+    async def speak(self, text: str, voice: str | None = None) -> np.ndarray:
         phonemes = await self._phonemizer.run(text)
         if not phonemes:
             return np.zeros(0, dtype=np.float32)
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._synth, phonemes)
+        return await loop.run_in_executor(None, self._synth, phonemes, voice or self._voice)
 
-    def _synth(self, phonemes: str) -> np.ndarray:
+    def _synth(self, phonemes: str, voice: str) -> np.ndarray:
         with self._lock:
             self._load()
             if self._temperature is None:
-                wav = self._engine.synth(phonemes)   # engine default (temp 0.8)
+                wav = self._engine.synth(phonemes, voice=voice)
             else:
-                wav = self._engine.synth(phonemes, temperature=self._temperature)
+                wav = self._engine.synth(
+                    phonemes, temperature=self._temperature, voice=voice)
         if wav.ndim > 1:
             wav = wav.mean(axis=-1)
         return np.asarray(wav, dtype=np.float32)
@@ -110,15 +134,14 @@ class VieneuTts(TtsBackend):
         return [(name, item.get("description", "")) for name, item in presets.items()]
 
     def set_voice(self, voice: str) -> None:
-        """Switch the preset embedding used by subsequent synthesis calls."""
-        with self._lock:
-            if self._engine is None:
-                if voice not in {name for name, _ in self.list_voices()}:
-                    raise ValueError(f"unknown voice {voice!r}")
-            else:
-                self._engine.set_voice(voice)
-            self._voice = voice
+        """Set the default voice for callers not using :meth:`for_voice`."""
+        self._validate_voice(voice)
+        self._voice = voice
         log.info("vieneu voice changed to %s", voice)
+
+    def _validate_voice(self, voice: str) -> None:
+        if voice not in {name for name, _ in self.list_voices()}:
+            raise ValueError(f"unknown voice {voice!r}")
 
     async def close(self) -> None:
         await self._phonemizer.close()

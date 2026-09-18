@@ -1,7 +1,8 @@
 """koko over websockets — hosts the whole interpreter pipeline behind one port.
 
-Listens on 0.0.0.0:6942 (cloudflared-tunnel friendly, one connection at a
-time). Protocol on a single socket:
+Listens on 0.0.0.0:6942 (cloudflared-tunnel friendly). Each websocket gets an
+independent interpreter pipeline while sharing the loaded TTS model. Protocol
+on a single socket:
 
   client -> server:
     binary frames     raw mono PCM16 @ 16 kHz (~20 ms per frame)
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 import json
 import logging
 from pathlib import Path
@@ -83,8 +85,6 @@ class WsServer:
     def __init__(self, cfg, event_sink=None, config_path="config.toml"):
         self.cfg = cfg
         self.config_path = str(Path(config_path).resolve())
-        self.busy = asyncio.Lock()
-        self.transcriber = None
         self.backend = None
         self.tts_voices: list[tuple[str, str]] = []
         # optional UI hook: called with each (kind, text) as the pipeline
@@ -167,8 +167,13 @@ class WsServer:
         log.info("loading models (ASR + TTS)...")
         # WhisperLive is the only ASR engine; TTS backend is still validated
         # so a config typo fails loudly instead of silently falling back.
-        self.transcriber = WhisperLiveAsr(cfg)
-        await self.transcriber.warmup()
+        # A warm-up connection asks WhisperLive to load its shared model, then
+        # closes. Every client gets its own ASR connection and language state.
+        warmup_transcriber = WhisperLiveAsr(cfg)
+        try:
+            await warmup_transcriber.warmup()
+        finally:
+            await warmup_transcriber.close()
         tts_backends = ("vieneu", "null")
         if cfg.tts.backend not in tts_backends:
             raise ValueError("unknown tts backend %r; expected one of %s"
@@ -183,8 +188,6 @@ class WsServer:
     async def _close_models(self) -> None:
         if self.backend is not None:
             await self.backend.close()
-        if self.transcriber is not None:
-            await self.transcriber.close()
 
     async def serve(self) -> None:
         """Load models, serve websocket connections until cancelled."""
@@ -210,20 +213,16 @@ class WsServer:
 
     # ---- plumbing per connection ----
     async def _wrapped(self, ws) -> None:
-        if self.busy.locked():
-            await self._ctl(ws, {"type": "error", "detail": "server busy"})
-            return
         self._register_client(ws)
         try:
-            async with self.busy:
+            try:
+                await self._session(ws)
+            except Exception:
+                log.exception("session crashed")
                 try:
-                    await self._session(ws)
+                    await self._ctl(ws, {"type": "error", "detail": "server error"})
                 except Exception:
-                    log.exception("session crashed")
-                    try:
-                        await self._ctl(ws, {"type": "error", "detail": "server error"})
-                    except Exception:
-                        pass
+                    pass
         finally:
             self.clients.pop(ws, None)
 
@@ -267,7 +266,9 @@ class WsServer:
     async def _session(self, ws) -> None:
         stop = asyncio.Event()
         bus = Bus()
-        cfg = self.cfg
+        # Controls received on this socket must never change another client's
+        # ASR language or voice selection.
+        cfg = copy.deepcopy(self.cfg)
         monitor = Monitor(cfg)
 
         out_rate = cfg.tts.sample_rate
@@ -279,7 +280,8 @@ class WsServer:
                 self.out_q = out_q
 
             def push(self, audio, sr):
-                self.out_q.put_nowait((audio, sr))
+                if not self.out_q.full():
+                    self.out_q.put_nowait((audio, sr))
 
             def start(self):
                 pass
@@ -288,8 +290,9 @@ class WsServer:
                 pass
 
         out_q: asyncio.Queue = asyncio.Queue(maxsize=256)
-        transcriber = self.transcriber
-        backend = self.backend
+        transcriber = WhisperLiveAsr(cfg)
+        backend = self.backend.for_voice(cfg.tts.vieneu_voice) if isinstance(
+            self.backend, VieneuTts) else self.backend
         feed = WsFeed(cfg, bus)
         gate = InterpretationGate(cfg, bus, monitor)
         llm = LlmStage(cfg, bus, monitor)
@@ -336,7 +339,7 @@ class WsServer:
                     await self._ctl(ws, {
                         "type": "ready",
                         "tts_voices": self.tts_voices,
-                        "tts_voice": getattr(self.backend, "_voice", None),
+                        "tts_voice": getattr(backend, "voice", None),
                         "asr_language": cfg.asr.language,
                         "asr_auto_detect": cfg.asr.auto_detect_language,
                     })
@@ -350,7 +353,7 @@ class WsServer:
                     voice = ctl.get("voice")
                     if not isinstance(voice, str):
                         await self._ctl(ws, {"type": "error", "detail": "tts_voice requires a string voice"})
-                    elif not isinstance(backend, VieneuTts):
+                    elif not isinstance(backend, VieneuTts.Voice):
                         await self._ctl(ws, {"type": "error", "detail": "voice selection requires the vieneu backend"})
                     else:
                         try:
@@ -387,12 +390,15 @@ class WsServer:
                 all_tasks.append(ui_task)
             for t in all_tasks:
                 t.cancel()
-            # gather() can hang on a wedged stage (stuck LLM call, executor
-            # task); a hung cleanup would keep `self.busy` locked forever and
-            # then reject every later client with "server busy". Bound it.
+            # A wedged stage (for example, a stuck LLM call or executor task)
+            # must not prevent this client from releasing its resources.
             await asyncio.wait(all_tasks, timeout=5)
             try:
                 await asyncio.wait_for(llm.close(), timeout=3)
+            except asyncio.TimeoutError:
+                pass
+            try:
+                await asyncio.wait_for(transcriber.close(), timeout=3)
             except asyncio.TimeoutError:
                 pass
 

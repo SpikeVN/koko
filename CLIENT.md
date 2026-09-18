@@ -23,9 +23,8 @@ microphone audio, JSON frames are control.
 4. Pick the `rate` from `audio` headers and play binary frames that
    follow.
 5. On quit: send `bye`, drain any remaining audio you want, close.
-6. Do not open a second connection from the same session — the server
-   holds only one live connection at a time and rejects a second with
-   `error: "server busy"`.
+6. Each connection is an independent session. Multiple clients can stream at
+   once and may use different ASR languages and TTS voices.
 
 ## Wire protocol v1
 
@@ -49,7 +48,7 @@ microphone audio, JSON frames are control.
 | `tts_voice` | `voice` | confirms that subsequent VieNeu audio uses this preset |
 | `asr_language` | `language` | confirms the active WhisperLive language |
 | `asr_auto_detect` | `enabled` | confirms Whisper automatic language detection |
-| `error` | `detail` | server refused (`server busy`) or a stage crashed |
+| `error` | `detail` | a stage crashed or a control request was invalid |
 | `audio` | `rate` (e.g. `48000`) | **announcement**: binary frames which follow immediately encoded mono PCM16 |
 | `partial` | `text` | temporary ASR guess for the current speech cycle |
 | `final` | `text` | confirmed ASR segment (per ~5 s of speech) |
@@ -112,11 +111,10 @@ microphone audio, JSON frames are control.
 
 ## Gotchas
 
-- The server is one-connection-at-a-time; don't open duplicate sockets.
+- Connections are independent; do not use duplicate sockets for the same
+  capture session unless the application intentionally needs separate contexts.
 - Backpressure: inbound frames are silently dropped by the server when
   its TTS output queue is nearly full. Keep buffering shallow (~20 ms
   chunks); extra buffering hurts latency more than it helps.
 - Audio and text frames interleave; a `final`/`translation` message can
   arrive while binary audio is mid-flight — handle both on one event loop.
-- Messages after `error: "server busy"` mean the connection will close.
-  Retry with backoff.

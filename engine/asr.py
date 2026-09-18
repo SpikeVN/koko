@@ -49,10 +49,9 @@ class WhisperLiveAsr(Transcriber):
     whisper-live expects a JSON config handshake as the first message on a
     connection, then pushes updates asynchronously: an initial
     SERVER_READY burst followed by rolling segment lists (the last N
-    segments are re-sent on every message, so dedupe is mandatory). We keep
-    one persistent socket — koko handles one session at a time (`busy`
-    lock) — and lazily reconnect + re-handshake when the socket dies or a
-    session `hello` changes the language.
+    segments are re-sent on every message, so dedupe is mandatory). Each
+    interpreter session keeps one persistent socket and lazily reconnects +
+    re-handshakes when the socket dies or its language changes.
     """
 
     def __init__(self, cfg: Config):

@@ -59,8 +59,8 @@ serialized to binary websocket frames.
    (`koko/server.py` `_session`); the TTS output queue similarly drops.
    Latency > throughput wins here — don't add unbounded buffering.
 5. Session teardown bounds every cleanup with `asyncio.wait(..., timeout)`
-   because a wedged stage (LLM call, executor thread) must not keep the
-   one-connection-at-a-time `busy` lock.
+   because a wedged stage (LLM call, executor thread) must not retain its
+   connection resources indefinitely.
 6. `koko/client.py`'s `_play` thread must be `join()`ed after `stop_evt`
    (never killed mid-`stream.write`) — portaudio segfaults otherwise.
 
