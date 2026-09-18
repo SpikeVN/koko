@@ -8,6 +8,7 @@ whisper_chunk_s = 0.25
 [asr]
 language = "en"
 auto_detect_language = false
+start_local_services = false
 whisper_live_url = "ws://whisper-live:9090"
 whisper_live_model = "deepdml/faster-whisper-large-v3-turbo-ct2"
 whisper_live_vad = true

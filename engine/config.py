@@ -32,6 +32,7 @@ class SourceConfig:
 class AsrConfig:
     language: str = "en"
     auto_detect_language: bool = False  # false = use language; true = Whisper detects per session
+    start_local_services: bool = True    # laptop mode; Compose manages these services
     # WhisperLive (separate server process; the only ASR engine)
     whisper_live_url: str = "ws://127.0.0.1:9090"
     whisper_live_model: str = "deepdml/faster-whisper-large-v3-turbo-ct2"

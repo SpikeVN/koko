@@ -117,6 +117,9 @@ class WsServer:
 
     async def _start_local_services(self) -> None:
         """Start missing local dependencies and wait for their sockets."""
+        if not self.cfg.asr.start_local_services:
+            log.info("local child services disabled; using configured service URLs")
+            return
         root = Path(__file__).resolve().parents[1]
         services = [
             ("phonemize", self.cfg.phonemize.url,
