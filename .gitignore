@@ -8,6 +8,7 @@ dist/
 
 # Virtual envs & lock artifacts
 .venv/
+.venv-whisperlive/
 
 # Wheels (download via MODELS.md, not committed)
 whls/
@@ -20,6 +21,11 @@ tts_model/**/*.onnx
 tts_model/*.onnx
 tts_model/**/*.data
 tts_model/**/*.npz
+tts_model/**/*.pt
+tts_model/**/*.pth
+tts_model/**/*.bin
+tts_model/**/*.safetensors
+tts_model/**/*.ckpt
 onnx_update/
 
 # Claude / editor / OS
