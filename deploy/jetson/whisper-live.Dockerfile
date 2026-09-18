@@ -18,7 +18,7 @@ RUN python3 -m pip install --no-cache-dir \
     "uvicorn==0.23.2" \
     "python-multipart==0.0.6" \
     "websocket-client==1.6.4" \
-    "websockets==10.4"
+    "websockets==11.0.3"
 
 COPY engine/config.py ./engine/config.py
 COPY koko/whisper_live_server.py ./koko/whisper_live_server.py
