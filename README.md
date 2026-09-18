@@ -124,6 +124,13 @@ Stages and files:
    uv run koko-client              # Tkinter client: mic → server → speakers
    ```
 
+### Jetson Xavier Docker deployment
+
+For a JetPack 5.1+ (L4T R35.2.1+) Xavier deployment, Compose definitions for
+the websocket server, GPU WhisperLive server, and phonemizer are in
+[`deploy/jetson/`](deploy/jetson/README.md). They use Jetson-containers R35
+images and publish only the websocket port.
+
 ## Quick facts
 
 - Input to the server: raw mono **PCM16 @ 16 kHz** in ~20 ms binary

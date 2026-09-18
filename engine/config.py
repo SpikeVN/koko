@@ -3,25 +3,29 @@
 Every external dependency (URLs, ports, model names) lives here so stages
 can be swapped without touching business logic. Values are loaded once from
 a TOML file (`config.toml` by default; `load_config(path)` for per-machine
-overrides) — there are no environment variables left. Unknown keys and
-wrong value types are rejected loudly instead of silently falling back
-(an old typo like `vietneu` vs `vieneu` cost real debugging time).
+overrides) — there are no environment variables left. Python 3.11+ uses
+stdlib `tomllib`; JetPack 5's Python 3.8 uses the equivalent `tomli` backport.
+Unknown keys and wrong value types are rejected loudly instead of silently
+falling back (an old typo like `vietneu` vs `vieneu` cost real debugging time).
 """
 
 from __future__ import annotations
 
-import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import UnionType
-from typing import Union, get_args, get_origin, get_type_hints
+from typing import Optional, Union, get_args, get_origin, get_type_hints
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.8 on JetPack 5
+    import tomli as tomllib
 
 
 @dataclass
 class SourceConfig:
     sample_rate: int = 16000       # input PCM sample rate (Hz); client sends 16 kHz
     whisper_chunk_s: float = 0.25  # size of each block fed to WhisperLive (s)
-    device: int | None = None      # PortAudio input device; None = system default
+    device: Optional[int] = None   # PortAudio input device; None = system default
 
 
 @dataclass
@@ -58,7 +62,7 @@ class TtsConfig:
     vieneu_model_path: str = ""         # empty = repo tts_model/ dir
     vieneu_voices_path: str = ""        # empty = <vieneu_model_path>/voices_v3_turbo.json
     vieneu_threads: int = 0             # 0 = auto (cores/2, capped at 8)
-    output_device: int | None = None    # None = system default output
+    output_device: Optional[int] = None  # None = system default output
     sample_rate: int = 48000            # VieNeu v3 Turbo emits 48 kHz
     greedy: bool = False                # temperature 0 (deterministic argmax path)
     execution_provider: str = "auto"    # "auto" | "cuda" | "cpu"
@@ -99,7 +103,7 @@ _SECTIONS = ("source", "asr", "gate", "llm", "tts", "phonemize")
 def _coerce(name: str, annotation, value):
     """Type-check + normalise one TOML value against a dataclass field type."""
     origin = get_origin(annotation)
-    if origin is Union or origin is UnionType:      # e.g. int | None
+    if origin is Union:                             # e.g. Optional[int]
         args = get_args(annotation)
         if value is None:
             if type(None) in args:
@@ -142,8 +146,8 @@ def _build_section(section: str, cls, table: dict):
     return cls(**kwargs)
 
 
-def load_config(path: str | Path = "config.toml") -> Config:
-    """Load the whole pipeline config from a TOML file (stdlib tomllib, py>=3.11).
+def load_config(path: Union[str, Path] = "config.toml") -> Config:
+    """Load the whole pipeline config from a TOML file.
 
     The file is required and validated: missing file, unknown sections/keys and
     wrong value types all fail loudly with a clear message.

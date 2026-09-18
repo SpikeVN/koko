@@ -1,0 +1,76 @@
+name: koko
+
+services:
+  websocket:
+    build:
+      context: ../..
+      dockerfile: deploy/jetson/websocket.Dockerfile
+      args:
+        BASE_IMAGE: ${ONNXRUNTIME_IMAGE:-dustynv/onnxruntime:r35.4.1}
+    image: koko-websocket:jp5
+    platform: linux/arm64
+    runtime: nvidia
+    init: true
+    restart: unless-stopped
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    ports:
+      - "6942:6942"
+    volumes:
+      - ../../tts_model:/app/tts_model:ro
+      - ./config.toml:/app/config.toml:ro
+    depends_on:
+      whisper-live:
+        condition: service_healthy
+      phonemize:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; socket.create_connection(('127.0.0.1', 6942), 2).close()"]
+      interval: 15s
+      timeout: 3s
+      retries: 8
+      start_period: 90s
+
+  whisper-live:
+    build:
+      context: ../..
+      dockerfile: deploy/jetson/whisper-live.Dockerfile
+      args:
+        BASE_IMAGE: ${WHISPER_IMAGE:-dustynv/whisperx:r35.3.1}
+    image: koko-whisper-live:jp5
+    platform: linux/arm64
+    runtime: nvidia
+    init: true
+    restart: unless-stopped
+    ipc: host
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      HF_HOME: /models/huggingface
+    volumes:
+      - whisper-models:/models
+      - ./config.toml:/app/config.toml:ro
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; socket.create_connection(('127.0.0.1', 9090), 2).close()"]
+      interval: 15s
+      timeout: 3s
+      retries: 12
+      start_period: 90s
+
+  phonemize:
+    build:
+      context: ../..
+      dockerfile: deploy/jetson/phonemize.Dockerfile
+    image: koko-phonemize:jp5
+    platform: linux/arm64
+    init: true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8788), 2).close()"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  whisper-models:

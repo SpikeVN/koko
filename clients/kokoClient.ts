@@ -28,7 +28,7 @@
  * try {
  *   await client.sendAudio(microphonePcm16);
  *   for await (const message of client.messages()) {
- *     if (message.type === "audio") {
+ *     if (message.kind === "audio") {
  *       output.write(message.pcm16, message.rate);
  *     } else if (message.type === "translation") {
  *       console.log(message.data.text);
@@ -40,12 +40,14 @@
  * ```
  *
  * Keep one `messages()` consumer running for the lifetime of the connection.
- * Audio and text events are interleaved. Koko permits only one live session,
- * so reuse one instance instead of opening parallel sockets.
+ * Audio and text events are interleaved. Each connection is an independent
+ * server-side session, but an instance owns only one connection at a time.
  */
 
 /** A JSON event received from the koko server. */
 export type KokoControl = {
+  /** Distinguishes a JSON protocol event from a PCM payload. */
+  kind: "control";
   /** Event name, such as `ready`, `partial`, `translation`, or `error`. */
   type: string;
   /** Complete JSON event, retained for forward-compatible field access. */
@@ -55,7 +57,7 @@ export type KokoControl = {
 /** One server-to-client raw mono PCM16 little-endian audio frame. */
 export type KokoAudio = {
   /** Discriminator for narrowing a {@link KokoMessage}. */
-  type: "audio";
+  kind: "audio";
   /** Raw PCM16 bytes. This is not a WAV file and has no header. */
   pcm16: Uint8Array;
   /** Sample rate announced for this frame, normally 48000. */
@@ -82,6 +84,8 @@ export class KokoClient {
   private waiters: Array<(pending: Pending) => void> = [];
   /** Terminal error delivered to current and future message consumers. */
   private ended?: Error;
+  /** Serializes Blob decoding with later websocket events. */
+  private receiveChain: Promise<void> = Promise.resolve();
 
   /**
    * Create a disconnected client.
@@ -115,17 +119,37 @@ export class KokoClient {
   async connect(language = "en", autoDetect = false): Promise<void> {
     if (this.socket) throw new Error("koko client is already connected");
     this.ended = undefined;
+    this.receiveChain = Promise.resolve();
     const socket = new WebSocket(this.url);
     socket.binaryType = "arraybuffer";
     this.socket = socket;
     try {
       await new Promise<void>((resolve, reject) => {
-        socket.onopen = () => resolve();
-        socket.onerror = () => reject(new Error("koko websocket connection failed"));
+        const cleanup = () => {
+          socket.onopen = null;
+          socket.onerror = null;
+          socket.onclose = null;
+        };
+        socket.onopen = () => {
+          cleanup();
+          resolve();
+        };
+        socket.onerror = () => {
+          cleanup();
+          reject(new Error("koko websocket connection failed"));
+        };
+        socket.onclose = () => {
+          cleanup();
+          reject(new Error("koko websocket closed before opening"));
+        };
       });
-      socket.onmessage = (event) => this.handleMessage(event.data);
-      socket.onclose = () => this.end(new Error("koko websocket closed"));
-      socket.onerror = () => this.end(new Error("koko websocket error"));
+      socket.onmessage = (event) => this.enqueueMessage(socket, event.data);
+      socket.onclose = () => {
+        if (this.socket === socket) this.end(new Error("koko websocket closed"));
+      };
+      socket.onerror = () => {
+        if (this.socket === socket) this.end(new Error("koko websocket error"));
+      };
       await this.sendControl({
         type: "hello",
         language,
@@ -203,7 +227,8 @@ export class KokoClient {
    * JSON frames are yielded as `KokoControl`. A binary frame is yielded as
    * `KokoAudio` using the most recent `audio.rate` announcement. The
    * announcement itself is also yielded as `KokoControl`, so consumers only
-   * interested in playable frames can ignore `type === "audio"` controls.
+   * interested in playable frames can ignore controls whose `type` is
+   * `"audio"`; use `kind === "audio"` to identify PCM payloads.
    *
    * Only one consumer should iterate this generator at a time. The generator
    * reports connection closure by throwing rather than silently returning.
@@ -244,16 +269,33 @@ export class KokoClient {
         cleanup();
         reject(new Error("koko websocket is not open"));
       };
+      const onClose = () => {
+        cleanup();
+        reject(new Error("koko websocket is not open"));
+      };
       const cleanup = () => {
         socket.removeEventListener("open", onOpen);
         socket.removeEventListener("error", onError);
+        socket.removeEventListener("close", onClose);
       };
       socket.addEventListener("open", onOpen);
       socket.addEventListener("error", onError);
+      socket.addEventListener("close", onClose);
     });
   }
 
-  private handleMessage(data: string | ArrayBuffer | Blob): void {
+  private enqueueMessage(socket: WebSocket, data: unknown): void {
+    // Blob.arrayBuffer() is asynchronous. Chain all frames to retain websocket
+    // order, otherwise a following audio header could change the Blob's rate.
+    this.receiveChain = this.receiveChain
+      .then(() => this.handleMessage(socket, data))
+      .catch((error: unknown) => {
+        if (this.socket === socket) this.end(toError(error));
+      });
+  }
+
+  private async handleMessage(socket: WebSocket, data: unknown): Promise<void> {
+    if (this.socket !== socket) return;
     // Bun normally supplies ArrayBuffer because binaryType is set above. Blob
     // handling remains here so the API also works with WebSocket runtimes
     // that choose Blob for binary events.
@@ -264,14 +306,23 @@ export class KokoClient {
       if (type === "audio" && typeof control.rate === "number") {
         this.audioRate = control.rate;
       }
-      this.push({ kind: "message", value: { type, data: control } });
+      this.push({ kind: "message", value: { kind: "control", type, data: control } });
       return;
     }
-    if (data instanceof Blob) {
-      void data.arrayBuffer().then((buffer) => this.pushAudio(buffer));
+    if (typeof Blob !== "undefined" && data instanceof Blob) {
+      this.pushAudio(await data.arrayBuffer());
       return;
     }
-    this.pushAudio(data);
+    if (data instanceof ArrayBuffer) {
+      this.pushAudio(data);
+      return;
+    }
+    if (ArrayBuffer.isView(data)) {
+      const bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+      this.pushAudio(bytes.slice().buffer);
+      return;
+    }
+    throw new Error("invalid koko binary message");
   }
 
   private pushAudio(buffer: ArrayBuffer): void {
@@ -279,13 +330,14 @@ export class KokoClient {
     // consumer decides whether to play bytes directly or decode samples.
     this.push({
       kind: "message",
-      value: { type: "audio", pcm16: new Uint8Array(buffer), rate: this.audioRate },
+      value: { kind: "audio", pcm16: new Uint8Array(buffer), rate: this.audioRate },
     });
   }
 
   private push(pending: Pending): void {
     // Resolve an awaiting generator before buffering. This keeps the normal
     // streaming path allocation-light while preserving arrival order.
+    if (this.ended) return;
     const waiter = this.waiters.shift();
     if (waiter) waiter(pending);
     else this.pending.push(pending);
@@ -307,4 +359,8 @@ export class KokoClient {
     this.ended = error;
     for (const waiter of this.waiters.splice(0)) waiter({ kind: "error", error });
   }
+}
+
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }
