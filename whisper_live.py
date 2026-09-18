@@ -20,10 +20,14 @@ def python_executable() -> Path:
 def provision() -> Path:
     python = python_executable()
     if not python.is_file():
-        subprocess.run(["uv", "venv", str(VENV)], cwd=ROOT, check=True)
         subprocess.run(
-            ["uv", "pip", "install", "--python", str(python), "--no-build-isolation",
-             "setuptools<81", "whisper-live"],
+            ["uv", "venv", "--python", "3.12", str(VENV)],
+            cwd=ROOT,
+            check=True,
+        )
+        subprocess.run(
+            ["uv", "pip", "install", "--python", str(python),
+             "-r", "requirements-whisper-live.txt"],
             cwd=ROOT,
             check=True,
         )

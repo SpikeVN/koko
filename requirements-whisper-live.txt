@@ -1,0 +1,9 @@
+# Core ASR runtime verified on the local CUDA 13.4 driver. Pin these together
+# so a fresh environment cannot silently replace the tested CUDA stack.
+whisper-live==0.10.0
+faster-whisper==1.2.0
+ctranslate2==4.8.2
+torch==2.14.0
+torchaudio==2.11.0
+numpy==2.4.6
+websockets==17.1
