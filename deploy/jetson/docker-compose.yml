@@ -3,12 +3,7 @@ name: koko
 services:
   websocket:
     container_name: koko-server
-    build:
-      context: ../..
-      dockerfile: deploy/jetson/websocket.Dockerfile
-      args:
-        BASE_IMAGE: ${ONNXRUNTIME_IMAGE:-dustynv/onnxruntime:r35.4.1}
-    image: koko-websocket:jp5
+    image: ghcr.io/spikevn/koko-server:jp5
     platform: linux/arm64
     runtime: nvidia
     init: true
@@ -35,12 +30,7 @@ services:
 
   whisper-live:
     container_name: koko-whisper
-    build:
-      context: ../..
-      dockerfile: deploy/jetson/whisper-live.Dockerfile
-      args:
-        BASE_IMAGE: ${WHISPER_IMAGE:-dustynv/whisperx:r35.3.1}
-    image: koko-whisper-live:jp5
+    image: ghcr.io/spikevn/koko-whisper:jp5
     platform: linux/arm64
     runtime: nvidia
     init: true
@@ -62,10 +52,7 @@ services:
 
   phonemize:
     container_name: koko-phonemize
-    build:
-      context: ../..
-      dockerfile: deploy/jetson/phonemize.Dockerfile
-    image: koko-phonemize:jp5
+    image: ghcr.io/spikevn/koko-phonemize:jp5
     platform: linux/arm64
     init: true
     restart: unless-stopped
