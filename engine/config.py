@@ -77,9 +77,9 @@ class PhonemizeConfig:
 @dataclass
 class GateConfig:
     # Space-delimited languages use words; CJK languages use script characters.
-    release_words: int = 8   # release a translation burst after this many units
+    release_words: int = 8      # release a translation burst after this many units
     gap_reset_s: float = 1.2    # silence gap > this, with text buffered, releases early
-    no_new_words_s: float = 2.0  # release if Whisper adds no finalized words this long
+    no_new_words_s: float = 5.0 # release a buffered burst after this long
 
 
 @dataclass

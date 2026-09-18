@@ -88,9 +88,9 @@ release_words = 8
 # but too short makes the gate fire mid-thought over short pauses.
 gap_reset_s = 1.2
 
-# Release buffered text if Whisper produces no additional finalized words for
-# this long, even while the speaker remains active.
-no_new_words_s = 2.0
+# Release buffered text this long after its first finalized word, even while
+# the speaker remains active. New ASR finals do not reset this deadline.
+no_new_words_s = 5.0
 
 [llm]
 # --- Translation LLM (OpenAI-compatible endpoint) -------------------------

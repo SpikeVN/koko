@@ -402,34 +402,15 @@ class ClientUI(tk.Tk):
             self._t_partial = data.get("text", "") or ""
             self._render_transcribed()
         elif message.type == "final":
-            final_text = (data.get("text") or "").strip()
-            partial = self._t_partial.strip()
-            if final_text:
-                previous = self._turn_text(self._t_current)
-                if partial and partial.endswith(final_text):
-                    # Whisper's committed CJK segment can be only the last
-                    # few characters of the longer provisional hypothesis.
-                    candidate = partial
-                elif partial and final_text.endswith(partial):
-                    candidate = final_text
-                else:
-                    candidate = final_text
-                    if partial:
-                        candidate += partial
-                if not previous.endswith(candidate):
-                    if previous and candidate.startswith(previous):
-                        self._t_current[-1] = candidate
-                    else:
-                        self._t_current.append(candidate)
+            if data.get("text"):
+                self._t_current.append(data["text"])
             self._t_partial = ""
             self._render_transcribed()
         elif message.type == "speak":
             if self._t_current or self._t_partial:
-                turn = [*self._t_current]
-                if self._t_partial:
-                    turn.append(self._t_partial)
-                self._t_turns.append(turn)
-                self._t_current, self._t_partial = [], ""
+                self._t_turns.append(self._t_current)
+                self._t_current = []
+                self._t_partial = ""
                 self._render_transcribed()
             if self._l_current:
                 self._l_turns.append(self._l_current)

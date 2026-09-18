@@ -6,8 +6,8 @@ Releases the buffered transcript on EITHER trigger:
   `gate.release_words` (e.g. 5), a burst is sent to the LLM; or
  * a pause — continuous silence longer than `gate.gap_reset_s`
   while anything is buffered ends the utterance and releases early.
-* a stalled transcript — no new finalized words for `gate.no_new_words_s`
-  releases buffered text even while the speaker remains active.
+* a time limit — `gate.no_new_words_s` after the first finalized word in a
+  burst releases buffered text even while the speaker remains active.
 
 Word counting uses `.split()` for space-delimited languages. For Japanese,
 Chinese, and Korean, script characters are counted instead because those
@@ -52,7 +52,7 @@ class InterpretationGate:
         self.silence_secs = 0.0    # continuous silence in AUDIO time
         self.speaking = False
         self.buffer: list[str] = []
-        self.last_text_at: float | None = None
+        self.buffered_since: float | None = None
 
     def on_voice(self, active: bool, dur_s: float) -> None:
         """Track speech/silence in *audio time*, not wall-clock spacing.
@@ -70,8 +70,9 @@ class InterpretationGate:
 
     def on_asr_text(self, ev: Event) -> None:
         if ev.text:
+            if not self.buffer:
+                self.buffered_since = time.monotonic()
             self.buffer.append(ev.text)
-            self.last_text_at = time.monotonic()
 
     def set_language(self, language: str) -> None:
         if isinstance(language, str) and language:
@@ -82,16 +83,16 @@ class InterpretationGate:
         self.buffer.clear()
         self.silence_secs = 0.0
         self.speaking = False
-        self.last_text_at = None
+        self.buffered_since = None
 
     def maybe_fire(self, now: float) -> Event | None:
         """Return a SPEAK event if the buffer should go to the LLM now.
 
         Fires when the buffered word/script-character count reaches
-        `release_words`, or when the speaker has paused (`silence_secs >= gap`)
-        with a non-empty buffer. Either way the buffer is cleared, so
-        continuous speech keeps producing translation bursts. Returns None
-        when there's nothing to say.
+        `release_words`, when the speaker has paused (`silence_secs >= gap`),
+        or when the burst reaches its time limit. Either way the buffer is
+        cleared, so continuous speech keeps producing translation bursts.
+        Returns None when there's nothing to say.
         """
         if not self.buffer:
             return None
@@ -102,12 +103,12 @@ class InterpretationGate:
         else:
             cjk_chars = sum(_is_cjk(ch) for ch in text)
             units = cjk_chars if cjk_chars else len(text.split())
-        stalled = (self.no_new_words > 0 and self.last_text_at is not None
-                   and now - self.last_text_at >= self.no_new_words)
-        if self.silence_secs >= self.gap or units >= self.release_words or stalled:
+        timed_out = (self.no_new_words > 0 and self.buffered_since is not None
+                     and now - self.buffered_since >= self.no_new_words)
+        if self.silence_secs >= self.gap or units >= self.release_words or timed_out:
             self.buffer.clear()
             self.silence_secs = 0.0
-            self.last_text_at = None
+            self.buffered_since = None
             return Event(
                 kind=Kind.SPEAK,
                 turn_id=f"u{now:.0f}",
