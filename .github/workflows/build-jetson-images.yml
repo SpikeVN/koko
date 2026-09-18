@@ -10,7 +10,6 @@ on:
       - "tools/phonemize_server.py"
       - "deploy/jetson/*.Dockerfile"
       - "deploy/jetson/requirements.websocket.txt"
-      - ".github/workflows/build-jetson-images.yml"
       - "pyproject.toml"
   workflow_dispatch:
 
@@ -19,25 +18,62 @@ permissions:
   packages: write
 
 jobs:
+  changes:
+    name: Detect image changes
+    runs-on: ubuntu-24.04
+    outputs:
+      server: ${{ steps.filter.outputs.server }}
+      whisper: ${{ steps.filter.outputs.whisper }}
+      phonemize: ${{ steps.filter.outputs.phonemize }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Detect changed image sources
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            server:
+              - 'engine/**'
+              - 'koko/**'
+              - 'deploy/jetson/websocket.Dockerfile'
+              - 'deploy/jetson/requirements.websocket.txt'
+              - 'pyproject.toml'
+            whisper:
+              - 'engine/config.py'
+              - 'koko/whisper_live_server.py'
+              - 'deploy/jetson/whisper-live.Dockerfile'
+            phonemize:
+              - 'tools/phonemize_server.py'
+              - 'deploy/jetson/phonemize.Dockerfile'
+      - name: Build changed-image matrix
+        id: matrix
+        env:
+          SERVER_CHANGED: ${{ steps.filter.outputs.server }}
+          WHISPER_CHANGED: ${{ steps.filter.outputs.whisper }}
+          PHONEMIZE_CHANGED: ${{ steps.filter.outputs.phonemize }}
+          BUILD_ALL: ${{ github.event_name == 'workflow_dispatch' || github.ref_type == 'tag' }}
+        run: |
+          matrix='[]'
+          if [[ "$SERVER_CHANGED" == true || "$BUILD_ALL" == true ]]; then
+            matrix=$(jq -c '. + [{"name":"server","filter":"server","dockerfile":"deploy/jetson/websocket.Dockerfile","image":"koko-server","base_arg":"BASE_IMAGE=dustynv/onnxruntime:r35.4.1"}]' <<< "$matrix")
+          fi
+          if [[ "$WHISPER_CHANGED" == true || "$BUILD_ALL" == true ]]; then
+            matrix=$(jq -c '. + [{"name":"whisper","filter":"whisper","dockerfile":"deploy/jetson/whisper-live.Dockerfile","image":"koko-whisper","base_arg":"BASE_IMAGE=dustynv/whisperx:r35.3.1"}]' <<< "$matrix")
+          fi
+          if [[ "$PHONEMIZE_CHANGED" == true || "$BUILD_ALL" == true ]]; then
+            matrix=$(jq -c '. + [{"name":"phonemize","filter":"phonemize","dockerfile":"deploy/jetson/phonemize.Dockerfile","image":"koko-phonemize","base_arg":""}]' <<< "$matrix")
+          fi
+          echo "matrix={\"include\":$matrix}" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build ${{ matrix.name }}
+    needs: changes
     runs-on: ubuntu-24.04-arm
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - name: server
-            dockerfile: deploy/jetson/websocket.Dockerfile
-            image: koko-server
-            base_arg: BASE_IMAGE=dustynv/onnxruntime:r35.4.1
-          - name: whisper
-            dockerfile: deploy/jetson/whisper-live.Dockerfile
-            image: koko-whisper
-            base_arg: BASE_IMAGE=dustynv/whisperx:r35.3.1
-          - name: phonemize
-            dockerfile: deploy/jetson/phonemize.Dockerfile
-            image: koko-phonemize
-            base_arg: ""
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
 
     steps:
       - name: Check out source

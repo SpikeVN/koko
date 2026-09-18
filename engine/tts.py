@@ -20,7 +20,6 @@ import time
 from pathlib import Path
 
 import numpy as np
-import sounddevice as sd
 
 from engine.bus import Bus
 from engine.config import Config
@@ -183,6 +182,10 @@ class AudioPlayer:
             self._thread.start()
 
     def _run(self):
+        # The websocket server queues audio for the client and does not need
+        # PortAudio. Import sounddevice only for the local playback pipeline.
+        import sounddevice as sd
+
         current_stream: sd.OutputStream | None = None
         while not self._stop.is_set():
             try:
