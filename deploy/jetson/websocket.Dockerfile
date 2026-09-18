@@ -10,6 +10,8 @@ RUN python3 -m pip install --no-cache-dir -r /tmp/requirements.txt
 
 COPY engine ./engine
 COPY koko ./koko
+COPY tts_model/voices_v3_turbo.json ./tts_model/voices_v3_turbo.json
+COPY tts_model/more_voices.json ./tts_model/more_voices.json
 
 EXPOSE 6942
 CMD ["python3", "-m", "koko.server", "--config", "/app/config.toml"]
