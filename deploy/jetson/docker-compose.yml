@@ -1,7 +1,7 @@
 name: koko
 
 services:
-  websocket:
+  koko-server:
     container_name: koko-server
     image: ghcr.io/spikevn/koko-server:jp5
     platform: linux/arm64
@@ -17,9 +17,9 @@ services:
       - ../../tts_model:/app/tts_model:ro
       - ./config.toml:/app/config.toml:ro
     depends_on:
-      whisper-live:
+      koko-whisper:
         condition: service_healthy
-      phonemize:
+      koko-phonemize:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python3", "-c", "import socket; socket.create_connection(('127.0.0.1', 6942), 2).close()"]
@@ -28,7 +28,7 @@ services:
       retries: 8
       start_period: 90s
 
-  whisper-live:
+  koko-whisper:
     container_name: koko-whisper
     image: ghcr.io/spikevn/koko-whisper:jp5
     platform: linux/arm64
@@ -50,7 +50,7 @@ services:
       retries: 12
       start_period: 90s
 
-  phonemize:
+  koko-phonemize:
     container_name: koko-phonemize
     image: ghcr.io/spikevn/koko-phonemize:jp5
     platform: linux/arm64

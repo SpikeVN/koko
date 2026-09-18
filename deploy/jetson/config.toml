@@ -9,7 +9,7 @@ whisper_chunk_s = 0.25
 language = "en"
 auto_detect_language = false
 start_local_services = false
-whisper_live_url = "ws://whisper-live:9090"
+whisper_live_url = "ws://koko-whisper:9090"
 whisper_live_model = "deepdml/faster-whisper-large-v3-turbo-ct2"
 whisper_live_vad = true
 whisper_live_same_output_threshold = 5
@@ -44,4 +44,4 @@ greedy = false
 execution_provider = "cuda"
 
 [phonemize]
-url = "http://phonemize:8788/phonemize"
+url = "http://koko-phonemize:8788/phonemize"

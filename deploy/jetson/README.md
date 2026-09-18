@@ -4,9 +4,9 @@ This Compose deployment targets a 32 GB Jetson Xavier on JetPack 5.1 or newer
 (L4T R35.2.1+). GitHub Actions builds and publishes the ARM64 images; the
 Jetson only pulls and runs them. The stack has three services:
 
-- `websocket`: Koko's public websocket/TTS server on port 6942.
-- `whisper-live`: GPU ASR on the private Compose network.
-- `phonemize`: CPU-only sea-g2p HTTP service on the private Compose network.
+- `koko-server`: Koko's public websocket/TTS server on port 6942.
+- `koko-whisper`: GPU ASR on the private Compose network.
+- `koko-phonemize`: CPU-only sea-g2p HTTP service on the private Compose network.
 
 The GPU images are based on `jetson-containers` R35 images. These images carry
 the JetPack-matched CUDA, CTranslate2, and ONNX Runtime builds; do not replace
