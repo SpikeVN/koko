@@ -11,7 +11,7 @@ import numpy as np
 
 logging.disable(logging.CRITICAL)
 sys.path.insert(0, ".")
-from engine.tts_vieneu import VieneuLite  # noqa: E402
+from koko.engine.tts_vieneu import VieneuLite  # noqa: E402
 
 eng = VieneuLite("tts_model")
 sess = eng.sess_ac

@@ -32,15 +32,15 @@ from urllib.parse import urlparse
 import numpy as np
 import websockets
 
-from engine.asr import AsrStage, WhisperLiveAsr
-from engine.bus import Bus
-from engine.config import load_config
-from engine.events import Event, Kind
-from engine.gate import InterpretationGate
-from engine.llm import LlmStage
-from engine.monitor import Monitor
-from engine.tts import NullTts, VieneuTts
-from engine.tts import TtsStage
+from koko.engine.asr import AsrStage, WhisperLiveAsr
+from koko.engine.bus import Bus
+from koko.engine.config import load_config
+from koko.engine.events import Event, Kind
+from koko.engine.gate import InterpretationGate
+from koko.engine.llm import LlmStage
+from koko.engine.monitor import Monitor
+from koko.engine.tts import NullTts, VieneuTts
+from koko.engine.tts import TtsStage
 
 log = logging.getLogger("koko.ws_server")
 

@@ -17,7 +17,7 @@ import numpy as np
 import websockets
 import sounddevice as sd
 from . import client_devices as cdev
-from clients.koko_client import KokoAudio, KokoClient, KokoControl
+from .koko_client import KokoAudio, KokoClient, KokoControl
 
 IN_RATE = 16_000
 OUT_RATE = 48_000

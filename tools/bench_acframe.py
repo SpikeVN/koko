@@ -7,7 +7,7 @@ import numpy as np
 
 logging.disable(logging.CRITICAL)
 sys.path.insert(0, ".")
-from engine.tts_vieneu import VieneuLite  # noqa: E402
+from koko.engine.tts_vieneu import VieneuLite  # noqa: E402
 
 eng = VieneuLite("tts_model")
 # spin=1 for acoustic like planned config
@@ -18,7 +18,7 @@ hist = None
 phases = {"pre": 0.0, "step0": 0.0, "steps": 0.0, "samp": 0.0, "eos": 0.0,
           "np": 0.0}
 
-import engine.tts_vieneu as tv
+import koko.engine.tts_vieneu as tv
 
 # wrapper around _sample to time it
 orig_sample = VieneuLite._sample

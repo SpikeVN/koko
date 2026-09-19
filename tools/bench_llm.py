@@ -1,7 +1,7 @@
 """Token-speed and latency benchmark for the LLM translation endpoint.
 
 Targets the configured OpenAI-compatible /v1 endpoint (vLLM / llama.cpp /
-ollama shim) exactly like the live `engine/llm.py` LlmStage: streamed SSE,
+ollama shim) exactly like the live `koko/engine/llm.py` LlmStage: streamed SSE,
 sentence-sized chunks, one request per speech window. Runtime model and LLM
 settings come from `config.toml`.
 
@@ -28,8 +28,8 @@ import httpx
 
 logging.disable(logging.CRITICAL)
 sys.path.insert(0, ".")
-from engine.config import load_config  # noqa: E402
-from engine.llm import LlmStage, _token_text  # noqa: E402
+from koko.engine.config import load_config  # noqa: E402
+from koko.engine.llm import LlmStage, _token_text  # noqa: E402
 
 TIMEOUT = 120
 # Input side: how long of a speech window each translation request covers

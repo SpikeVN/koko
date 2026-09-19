@@ -1,22 +1,13 @@
-"""Remote phonemizer client.
-
-sea-g2p's G2P core is a Rust abi3 extension (py3.10+ only, no cp38/aarch64
-wheel), so text normalization + G2P runs on the cloud host (same box as the
-LLM, reached over the tunnel). The TTS engine here receives phonemes only.
-
-The endpoint must accept POST {"text": "..."} and return JSON
-{"phonemes": "..."} — a ~15 line sea-g2p wrapper on the LLM box.
-"""
+"""Remote phonemizer client."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Optional
 
 import httpx
 
-from engine.config import Config
+from koko.engine.config import Config
 
 log = logging.getLogger("koko.phonemize")
 
@@ -27,7 +18,7 @@ class Phonemizer:
         self._client = httpx.AsyncClient(timeout=timeout)
 
     async def run(self, text: str) -> Optional[str]:
-        """text -> phoneme string, or None (caller should still log/use raw)."""
+        """Return phonemes for text, or None when the service fails."""
         try:
             resp = await self._client.post(self.url, json={"text": text})
             resp.raise_for_status()

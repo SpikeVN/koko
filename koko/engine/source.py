@@ -17,10 +17,10 @@ import threading
 import numpy as np
 import sounddevice as sd
 
-from engine.bus import Bus
-from engine.config import Config
-from engine.events import Event, Kind
-from engine.monitor import Monitor
+from koko.engine.bus import Bus
+from koko.engine.config import Config
+from koko.engine.events import Event, Kind
+from koko.engine.monitor import Monitor
 
 log = logging.getLogger("koko.source")
 

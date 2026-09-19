@@ -2,7 +2,7 @@
 
 Parameters that used to be argparse flags (host, port, backend, model, max
 clients, connection cap) now come from the `[asr]` section of config.toml
-(engine/config.py is the single source of truth). Run via
+(koko/engine/config.py is the single source of truth). Run via
 `python whisper_live.py`, which provisions the dedicated
 `.venv-whisperlive` venv and boots this script.
 """
@@ -14,7 +14,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from engine.config import load_config
+from koko.engine.config import load_config
 
 logging.basicConfig(level=logging.INFO)
 

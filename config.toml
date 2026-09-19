@@ -1,6 +1,6 @@
 # koko — pipeline configuration (single source of truth for external facts).
 #
-# Loaded once at startup by engine/config.py via the stdlib `tomllib` loader.
+# Loaded once at startup by koko/engine/config.py via the stdlib `tomllib` loader.
 # Every runtime knob that used to be a KOKO_* / OPENAI_* env var now lives
 # here. The loader validates the file strictly:
 #   * the file must exist  (fail loudly if missing)
@@ -146,6 +146,6 @@ execution_provider = "auto"
 
 [phonemize]
 # --- G2P endpoint (text -> phonemes) ---------------------------------------
-# HTTP POST endpoint of engine/../tools/phonemize_server.py (sea-g2p's Rust
+# HTTP POST endpoint of koko/../tools/phonemize_server.py (sea-g2p's Rust
 # core only runs server-side). Usually colocated with the LLM host.
 url = "http://127.0.0.1:8788/phonemize"

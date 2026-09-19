@@ -25,11 +25,10 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["koko*", "engine*", "clients*"]
+include = ["koko*", "clients*"]
 
 [project.scripts]
-koko = "engine.pipeline:main"
-koko-client = "koko.client:main"
+koko-client = "clients.client:main"
 koko-server = "koko.server:main"
 koko-whisper-server = "koko.whisper_live_server:main"
 

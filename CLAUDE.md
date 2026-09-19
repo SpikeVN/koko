@@ -9,36 +9,36 @@ serialized to binary websocket frames.
 
 ## Layout
 
-- `engine/config.py` — single source of truth for all external facts
+- `koko/engine/config.py` — single source of truth for all external facts
   (URLs, ports, model names, sample rates); values are loaded from
   `config.toml` via `load_config(path)` (stdlib `tomllib`). No env vars.
   Unknown keys / sections and wrong types raise at load; per-machine files
   are passed with `koko-server --config PATH`. Do not hardcode those facts
   anywhere else.
-- `engine/bus.py` / `engine/events.py` — pub/sub event bus stages run on.
+- `koko/engine/bus.py` / `koko/engine/events.py` — pub/sub event bus stages run on.
   Kinds: `SOURCE_CHUNK`, `SOURCE_SPEAKS`, `PARTIAL_TEXT`, `FINAL_TEXT`,
   `SPEAK`, `ASSISTANT_CHUNK`.
-- `engine/asr.py` — WhisperLive (the only ASR engine; needs a
+- `koko/engine/asr.py` — WhisperLive (the only ASR engine; needs a
   `whisper_live_url` server). It speaks the whisper-live 0.10 handshake
   (JSON config → `SERVER_READY`, then rolling `segments` updates that are
   deduped); every ASR fact — client and server — lives in `config.toml`
   `[asr]`. The server process (`koko/whisper_live_server.py`) is switchless.
-- `engine/gate.py` — buffers transcript; releases to LLM once
+- `koko/engine/gate.py` — buffers transcript; releases to LLM once
   `release_words` (5) source words accumulate, or early when a
   `gap_reset_s` (1.2 s) silence gap ends the utterance with text buffered.
-- `engine/llm.py` — OpenAI-compatible streaming; emits sentence-sized
+- `koko/engine/llm.py` — OpenAI-compatible streaming; emits sentence-sized
   `ASSISTANT_CHUNK`s so TTS starts before generation finishes.
-- `engine/tts.py`, `engine/tts_vieneu.py` — VieneuLite ONNX pipeline
+- `koko/engine/tts.py`, `koko/engine/tts_vieneu.py` — VieneuLite ONNX pipeline
   (torch-free); phonemes come from the remote phonemizer.
-- `engine/phonemize.py` — HTTP client for the G2P endpoint
+- `koko/engine/phonemize.py` — HTTP client for the G2P endpoint
   (`tools/phonemize_server.py` on the LLM host; sea-g2p is Rust-only on
   the server side).
-- `engine/pipeline.py`, `engine/source.py`, `engine/tts.py`'s
+- `koko/engine/pipeline.py`, `koko/engine/source.py`, `koko/engine/tts.py`'s
   `AudioPlayer` — the local (non-websocket) pipeline; `source.py` = mic,
   `AudioPlayer` = local speakers. Used for benching / offline testing.
 - `koko/server.py` — the thing you actually run; protocol documented in
   `CLIENT.md` and the module docstring.
-- `koko/client.py` — reference Tkinter client (mic → socket → playback).
+- `clients/client.py` — reference Tkinter client (mic → socket → playback).
 - `tools/` — model fetch, phonemize server, benches.
 
 ## Must-know invariants
@@ -61,7 +61,7 @@ serialized to binary websocket frames.
 5. Session teardown bounds every cleanup with `asyncio.wait(..., timeout)`
    because a wedged stage (LLM call, executor thread) must not retain its
    connection resources indefinitely.
-6. `koko/client.py`'s `_play` thread must be `join()`ed after `stop_evt`
+6. `clients/client.py`'s `_play` thread must be `join()`ed after `stop_evt`
    (never killed mid-`stream.write`) — portaudio segfaults otherwise.
 
 ## Ops

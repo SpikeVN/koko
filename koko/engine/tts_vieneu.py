@@ -4,7 +4,7 @@ Ported from vieneu._v3_turbo_engine.onnx_runtime_lite (Apache-2.0), trimmed to
 what koko needs:
   * local model directory (tts_model/) instead of huggingface_hub downloads
   * phonemization is *not* performed here — callers pass pre-phonemized text
-    (see engine/phonemize.py; sea-g2p's Rust core is py3.10-only)
+    (see koko/engine/phonemize.py; sea-g2p's Rust core is py3.10-only)
   * preset voices only (voice-cloning path dropped: no speaker-
     encoder/denoiser wiring on the Jetson yet)
 

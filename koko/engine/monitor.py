@@ -1,9 +1,4 @@
-"""Per-event latency tracing + periodic stage health report.
-
-Every event carries a monotonic creation ts; stages stamp `marks` on it
-on receipt/departure, and the monitor aggregates percentiles so "the bot
-feels laggy" turns into numbers.
-"""
+"""Per-event latency tracing and periodic stage health reporting."""
 
 from __future__ import annotations
 
@@ -12,8 +7,8 @@ import logging
 import time
 from collections import deque
 
-from engine.config import Config
-from engine.events import Event, Kind
+from koko.engine.config import Config
+from koko.engine.events import Event
 
 log = logging.getLogger("koko.monitor")
 
@@ -22,7 +17,7 @@ class Monitor:
     def __init__(self, cfg: Config, every_s: float = 10.0):
         self.cfg = cfg
         self.every_s = every_s
-        self._hist: deque[float] = deque(maxlen=1000)  # event age at first stage it is late at
+        self._hist: deque[float] = deque(maxlen=1000)
 
     def observe(self, ev: Event) -> None:
         self._hist.append(time.monotonic() - ev.ts)

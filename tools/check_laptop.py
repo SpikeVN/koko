@@ -29,8 +29,8 @@ def check(name, fn):
 
 
 def asr():
-    from engine.asr import WhisperLiveAsr
-    from engine.config import load_config
+    from koko.engine.asr import WhisperLiveAsr
+    from koko.engine.config import load_config
     import asyncio
     import numpy as np
 
@@ -54,7 +54,7 @@ def asr():
 
 def phonemize():
     import httpx
-    from engine.config import load_config
+    from koko.engine.config import load_config
 
     url = load_config().phonemize.url
     response = httpx.post(url, json={"text": "xin chào"}, timeout=10)
@@ -65,7 +65,7 @@ def phonemize():
 
 
 def tts():
-    from engine.tts_vieneu import VieneuLite
+    from koko.engine.tts_vieneu import VieneuLite
     eng = VieneuLite("tts_model")
     v = eng.default_voice or next(iter(eng.presets), "")
     eng.set_voice(v)
@@ -79,7 +79,7 @@ def tts():
 
 
 def tts_stream():
-    from engine.tts_vieneu import VieneuLite
+    from koko.engine.tts_vieneu import VieneuLite
     eng = VieneuLite("tts_model")
     v = eng.default_voice or next(iter(eng.presets), "")
     eng.set_voice(v)

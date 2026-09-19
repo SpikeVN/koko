@@ -18,6 +18,7 @@ whisper_live_port = 9090
 whisper_live_backend = "faster_whisper"
 whisper_live_max_clients = 4
 whisper_live_max_connection_s = 600
+whisper_live_handshake_timeout_s = 120.0
 
 [gate]
 release_words = 8

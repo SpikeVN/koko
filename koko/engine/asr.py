@@ -19,10 +19,10 @@ import uuid
 
 import numpy as np
 
-from engine.bus import Bus
-from engine.config import Config
-from engine.events import Event, Kind
-from engine.monitor import Monitor
+from koko.engine.bus import Bus
+from koko.engine.config import Config
+from koko.engine.events import Event, Kind
+from koko.engine.monitor import Monitor
 
 log = logging.getLogger("koko.asr")
 
@@ -77,7 +77,8 @@ class WhisperLiveAsr(Transcriber):
             "audio_format": "int16",               # matches our PCM16 wire
         }))
         try:
-            first = json.loads(await asyncio.wait_for(self._ws.recv(), timeout=10))
+            first = json.loads(await asyncio.wait_for(
+                self._ws.recv(), timeout=cfg.whisper_live_handshake_timeout_s))
         except asyncio.TimeoutError:
             raise RuntimeError(
                 f"whisper-live {cfg.whisper_live_url} never answered the "

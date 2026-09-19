@@ -21,9 +21,9 @@ from pathlib import Path
 
 import numpy as np
 
-from engine.bus import Bus
-from engine.config import Config
-from engine.events import Event, Kind
+from koko.engine.bus import Bus
+from koko.engine.config import Config
+from koko.engine.events import Event, Kind
 
 log = logging.getLogger("koko.tts")
 
@@ -46,12 +46,12 @@ class NullTts(TtsBackend):
 
 class VieneuTts(TtsBackend):
     """VieNeu-TTS v3 Turbo via the local torch-free ONNX pipeline
-    (engine/tts_vieneu.py), phonemized remotely (engine/phonemize.py).
+    (koko/engine/tts_vieneu.py), phonemized remotely (koko/engine/phonemize.py).
 
     Heavy synth runs in a worker thread so the asyncio loop never blocks."""
 
     def __init__(self, cfg: Config):
-        from engine.phonemize import Phonemizer
+        from koko.engine.phonemize import Phonemizer
         self._cfg = cfg
         self.sample_rate = cfg.tts.sample_rate
         self._engine = None
@@ -69,7 +69,7 @@ class VieneuTts(TtsBackend):
     def _load(self) -> None:
         if self._engine is not None:
             return
-        from engine.tts_vieneu import VieneuLite
+        from koko.engine.tts_vieneu import VieneuLite
 
         self._engine = VieneuLite(
             model_dir=self._model_path,

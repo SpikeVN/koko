@@ -18,14 +18,14 @@ import asyncio
 import logging
 import threading
 
-from engine.bus import Bus
-from engine.config import Config
-from engine.monitor import Monitor
-from engine.source import MicSource
-from engine.asr import AsrStage, WhisperLiveAsr
-from engine.gate import InterpretationGate
-from engine.llm import LlmStage
-from engine.tts import AudioPlayer, NullTts, TtsStage, VieneuTts
+from koko.engine.bus import Bus
+from koko.engine.config import Config
+from koko.engine.monitor import Monitor
+from koko.engine.source import MicSource
+from koko.engine.asr import AsrStage, WhisperLiveAsr
+from koko.engine.gate import InterpretationGate
+from koko.engine.llm import LlmStage
+from koko.engine.tts import AudioPlayer, NullTts, TtsStage, VieneuTts
 
 log = logging.getLogger("koko.pipeline")
 
@@ -82,7 +82,7 @@ async def run_pipeline(cfg: Config, stop: asyncio.Event) -> None:
 
 
 def main() -> None:
-    from engine.config import load_config
+    from koko.engine.config import load_config
 
     cfg = load_config()
 

@@ -14,10 +14,10 @@ import logging
 
 import httpx
 
-from engine.bus import Bus, get_or_stop as _get
-from engine.config import Config
-from engine.events import Event, Kind
-from engine.monitor import Monitor
+from koko.engine.bus import Bus, get_or_stop as _get
+from koko.engine.config import Config
+from koko.engine.events import Event, Kind
+from koko.engine.monitor import Monitor
 
 log = logging.getLogger("koko.llm")
 

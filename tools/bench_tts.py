@@ -15,7 +15,7 @@ FRAME_HZ = 25.0
 
 logging.disable(logging.CRITICAL)
 sys.path.insert(0, ".")
-from engine.tts_vieneu import VieneuLite  # noqa: E402
+from koko.engine.tts_vieneu import VieneuLite  # noqa: E402
 
 PH = ("xin chào, đây là một đoạn văn dài hơn dùng để đo tốc độ tổng hợp "
       "giọng nói tiếng việt, hy vọng nó đủ nhanh cho realtime")

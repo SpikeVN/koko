@@ -1,11 +1,11 @@
 import unittest
 from unittest.mock import patch
 
-from engine.bus import Bus
-from engine.config import Config
-from engine.events import Event, Kind
-from engine.gate import InterpretationGate
-from engine.monitor import Monitor
+from koko.engine.bus import Bus
+from koko.engine.config import Config
+from koko.engine.events import Event, Kind
+from koko.engine.gate import InterpretationGate
+from koko.engine.monitor import Monitor
 
 
 class InterpretationGateTests(unittest.TestCase):
@@ -15,7 +15,7 @@ class InterpretationGateTests(unittest.TestCase):
         cfg.gate.no_new_words_s = 5.0
         gate = InterpretationGate(cfg, Bus(), Monitor(cfg))
 
-        with patch("engine.gate.time.monotonic", side_effect=(100.0, 104.9)):
+        with patch("koko.engine.gate.time.monotonic", side_effect=(100.0, 104.9)):
             gate.on_asr_text(Event(kind=Kind.FINAL_TEXT, text="one"))
             gate.on_asr_text(Event(kind=Kind.FINAL_TEXT, text="two"))
 

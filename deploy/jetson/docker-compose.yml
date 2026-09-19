@@ -14,7 +14,10 @@ services:
     ports:
       - "6942:6942"
     volumes:
-      - ../../tts_model:/app/tts_model:ro
+      # Keep preset metadata from the image; mount only downloaded model assets.
+      - ../../tts_model/onnx_int8:/app/tts_model/onnx_int8:ro
+      - ../../tts_model/codec:/app/tts_model/codec:ro
+      - ../../tts_model/denoiser.onnx:/app/tts_model/denoiser.onnx:ro
       - ./config.toml:/app/config.toml:ro
     depends_on:
       koko-whisper:

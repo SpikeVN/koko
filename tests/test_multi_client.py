@@ -1,8 +1,8 @@
 import asyncio
 import unittest
 
-from engine.config import Config
-from engine.tts import VieneuTts
+from koko.engine.config import Config
+from koko.engine.tts import VieneuTts
 from koko.server import WsServer
 
 

@@ -15,7 +15,7 @@ import queue
 import logging
 import threading
 
-from engine.events import Event, Kind
+from koko.engine.events import Event, Kind
 
 log = logging.getLogger("koko.bus")
 

@@ -24,7 +24,7 @@ import numpy as np
 import sounddevice as sd
 
 from . import client_devices as cdev
-from clients.koko_client import KokoAudio, KokoClient, KokoControl
+from .koko_client import KokoAudio, KokoClient, KokoControl
 
 IN_RATE = 16_000
 OUT_RATE = 48_000
@@ -40,7 +40,7 @@ ASR_LANGUAGE_OPTIONS = [
     ("Indonesian", "id"), ("Arabic", "ar"), ("Hindi", "hi"),
 ]
 
-log = logging.getLogger("koko.client_ui")
+log = logging.getLogger("clients.client_ui")
 
 try:
     import soxr

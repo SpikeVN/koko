@@ -50,7 +50,7 @@ uv run tools/fetch_models.py --force    # re-download everything
   (uninstall any existing onnxruntime first).
 - CUDA EP additionally needs `libcufft-11-4` via apt
   (`sudo apt install libcufft-11-4`); cufft/cublas/cudart are preloaded from
-  system paths by `engine/tts_vieneu.py`.
+  system paths by `koko/engine/tts_vieneu.py`.
 - Torch wheel only needed for re-exporting graphs; not required to run TTS.
 
 ## 4. Voices & remote services

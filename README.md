@@ -54,13 +54,13 @@ Stages and files:
 
 | component | file | what it does |
 |---|---|---|
-| ASR | `engine/asr.py` | streaming Whisper via a separate WhisperLive server (`whisper_live_url`) |
-| Gate | `engine/gate.py` | decides *when* buffered transcript goes to the LLM |
-| LLM | `engine/llm.py` | streaming translation; groups tokens into sentences |
-| TTS | `engine/tts.py`, `engine/tts_vieneu.py` | VieNeu-TTS via local ONNX, or null dry-run output |
-| phonemes | `engine/phonemize.py` | remote G2P client (text → phonemes over HTTP) |
+| ASR | `koko/engine/asr.py` | streaming Whisper via a separate WhisperLive server (`whisper_live_url`) |
+| Gate | `koko/engine/gate.py` | decides *when* buffered transcript goes to the LLM |
+| LLM | `koko/engine/llm.py` | streaming translation; groups tokens into sentences |
+| TTS | `koko/engine/tts.py`, `koko/engine/tts_vieneu.py` | VieNeu-TTS via local ONNX, or null dry-run output |
+| phonemes | `koko/engine/phonemize.py` | remote G2P client (text → phonemes over HTTP) |
 | server | `koko/server.py` | hosts the whole pipeline on port 6942 |
-| reference client | `koko/client.py` | streams mic audio, plays returned TTS |
+| reference client | `clients/client.py` | streams mic audio, plays returned TTS |
 
 ## Setup
 
@@ -79,7 +79,7 @@ Stages and files:
    See `MODELS.md` for the full list of what lands where.
 
 3. **Configure** (or accept defaults) — everything lives in one TOML file,
-   `config.toml`, loaded at startup by `engine/config.py`. There are no env
+   `config.toml`, loaded at startup by `koko/engine/config.py`. There are no env
    vars. The important sections:
 
    - `[llm]` `base_url` / `model` — any OpenAI-compatible server
@@ -144,7 +144,7 @@ images and publish only the websocket port.
 ## Development
 
 `tools/bench_*.py` scripts benchmark LLM / TTS / audio paths.
-`config.toml` (loaded by `engine/config.py`) is the single source of truth
+`config.toml` (loaded by `koko/engine/config.py`) is the single source of truth
 for external facts (URLs, model names); it's validated at startup — unknown
 sections/keys and wrong value types are rejected, and unknown ASR / TTS
 backend values raise `ValueError`.
