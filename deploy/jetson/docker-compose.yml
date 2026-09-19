@@ -34,6 +34,9 @@ services:
   koko-whisper:
     container_name: koko-whisper
     image: ghcr.io/spikevn/koko-whisper:jp5
+    # Built locally on this Xavier from faster-whisper:jp5. Never replace it
+    # when refreshing the support images from GHCR.
+    pull_policy: never
     platform: linux/arm64
     runtime: nvidia
     init: true

@@ -28,7 +28,7 @@ with PyPI CUDA wheels.
 From the repository root on the Jetson:
 
 ```bash
-docker compose -f deploy/jetson/docker-compose.yml pull
+docker compose -f deploy/jetson/docker-compose.yml pull koko-server koko-phonemize
 docker compose -f deploy/jetson/docker-compose.yml up -d
 docker compose -f deploy/jetson/docker-compose.yml logs -f
 ```
@@ -62,6 +62,10 @@ docker build --pull \
   --file deploy/jetson/whisper-live.Dockerfile .
 docker compose -f deploy/jetson/docker-compose.yml up -d --no-deps --force-recreate koko-whisper
 ```
+
+`koko-whisper` has `pull_policy: never`, so Compose always uses this local
+Xavier-built image. Pull only `koko-server` and `koko-phonemize` when updating
+the remotely published support images.
 
 Confirm that the local image uses the Xavier GPU:
 
