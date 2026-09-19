@@ -16,6 +16,7 @@ whisper_live_same_output_threshold = 5
 whisper_live_host = "0.0.0.0"
 whisper_live_port = 9090
 whisper_live_backend = "faster_whisper"
+whisper_live_python = "3.8"
 whisper_live_max_clients = 4
 whisper_live_max_connection_s = 600
 whisper_live_handshake_timeout_s = 120.0

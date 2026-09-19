@@ -42,6 +42,7 @@ class AsrConfig:
     whisper_live_host: str = "0.0.0.0"
     whisper_live_port: int = 9090
     whisper_live_backend: str = "faster_whisper"
+    whisper_live_python: str = "3.12"
     whisper_live_max_clients: int = 4
     whisper_live_max_connection_s: int = 600
     whisper_live_handshake_timeout_s: float = 120.0

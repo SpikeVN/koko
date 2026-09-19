@@ -69,6 +69,7 @@ whisper_live_port = 9090
 # Inference backend: "faster_whisper" (the stock, GPU-friendly default;
 # "tensorrt" / "openvino" are the library's alternatives).
 whisper_live_backend = "faster_whisper"
+whisper_live_python = "3.12"
 
 # Max simultaneous clients and per-connection lifetime (s). The server
 # closes a client connection after the lifetime, so the client reconnects.
