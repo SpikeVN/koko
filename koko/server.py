@@ -10,7 +10,8 @@ on a single socket:
   server -> client:
     {"type":"audio","rate":48} + binary PCM16 chunks (TTS output)
     {"type":"partial","text":...} / {"type":"final","text":...}  live ASR
-    {"type":"speak","text":...}              text being interpreted
+  {"type":"speak","text":...}              text being interpreted
+  {"type":"translation_partial","text":...} live incomplete translation
     {"type":"ready"} / {"type":"error","detail":...}
 
 Run:  uv run koko-server [--config ./config.toml]
@@ -60,14 +61,14 @@ class WsFeed:
     def __init__(self, cfg, bus: Bus):
         self.bus = bus
         self.block_asr = int(cfg.source.whisper_chunk_s * cfg.source.sample_rate)
-        self._packed: list[np.ndarray] = []
+        self._packed = np.empty(0, dtype=np.float32)
 
     async def feed(self, pcm16_chunk: bytes) -> None:
         x = np.frombuffer(pcm16_chunk, dtype=np.int16).astype(np.float32) / 32768.0
-        self._packed.append(x)
-        if self._packed and sum(n.size for n in self._packed) >= self.block_asr:
-            chunk = np.concatenate(self._packed)
-            self._packed = []
+        self._packed = np.concatenate((self._packed, x))
+        while self._packed.size >= self.block_asr:
+            chunk = self._packed[:self.block_asr]
+            self._packed = self._packed[self.block_asr:]
             rms = float(np.sqrt(np.mean(np.square(chunk)) + 1e-12))
             db = 20.0 * np.log10(rms + 1e-9)
             active = db > DBFS_FLOOR
@@ -422,14 +423,14 @@ class WsServer:
     async def _forward_texts(bus: Bus, ws, stop: asyncio.Event) -> None:
         """Relay ASR text and LLM turns as websocket control messages."""
         q = bus.subscribe(Kind.PARTIAL_TEXT, Kind.FINAL_TEXT, Kind.SPEAK,
-                          Kind.ASSISTANT_CHUNK)
+                          Kind.ASSISTANT_PARTIAL, Kind.ASSISTANT_CHUNK)
         while not stop.is_set():
             try:
                 ev = await asyncio.wait_for(q.get(), timeout=0.5)
             except asyncio.TimeoutError:
                 continue
             kind = {"partial_text": "partial", "final_text": "final",
-                    "speak": "speak",
+                    "speak": "speak", "assistant_partial": "translation_partial",
                     "assistant_chunk": "translation"}.get(str(ev.kind.value),
                                                           str(ev.kind.value))
             log.info("text[%s]: %r", kind, ev.text)

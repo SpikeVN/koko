@@ -14,6 +14,7 @@ class Kind(str, Enum):
     PARTIAL_TEXT = "partial_text"
     FINAL_TEXT = "final_text"
     SPEAK = "speak"
+    ASSISTANT_PARTIAL = "assistant_partial"
     ASSISTANT_CHUNK = "assistant_chunk"
     BARGE_IN = "barge_in"
     SHUTDOWN = "shutdown"

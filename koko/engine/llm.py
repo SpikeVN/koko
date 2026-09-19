@@ -108,6 +108,9 @@ class LlmStage:
                         continue
                     buf += tok
                     full.append(tok)
+                    await self.bus.publish(Event(
+                        kind=Kind.ASSISTANT_PARTIAL, turn_id=turn_id, text=buf.strip()
+                    ))
                     if _ends_sentence(buf, _CHUNK_MAX_CHARS):
                         if generation != self._context_generation:
                             return

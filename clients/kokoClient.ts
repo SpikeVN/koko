@@ -48,7 +48,7 @@
 export type KokoControl = {
   /** Distinguishes a JSON protocol event from a PCM payload. */
   kind: "control";
-  /** Event name, such as `ready`, `partial`, `translation`, or `error`. */
+  /** Event name, such as `ready`, `partial`, `translation_partial`, `translation`, or `error`. */
   type: string;
   /** Complete JSON event, retained for forward-compatible field access. */
   data: Record<string, unknown>;

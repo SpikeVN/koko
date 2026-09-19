@@ -56,7 +56,7 @@ class KokoControl:
 
     Attributes:
         type: The server event name, such as ``ready``, ``partial``,
-            ``translation``, ``audio``, or ``error``.
+            ``translation_partial``, ``translation``, ``audio``, or ``error``.
         data: The complete decoded JSON object.  Keeping the full object makes
             the client forward-compatible with new server fields.
 
@@ -64,7 +64,7 @@ class KokoControl:
 
     * ``ready``: ``asr_language``, ``asr_auto_detect``, ``tts_voices``, and
       ``tts_voice``.
-    * ``partial``, ``final``, ``speak``, ``translation``: ``text``.
+    * ``partial``, ``final``, ``speak``, ``translation_partial``, ``translation``: ``text``.
     * ``error``: ``detail``.
     * ``audio``: ``rate`` for the binary frame that follows.
     """

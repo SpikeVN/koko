@@ -127,6 +127,7 @@ class ClientUI(tk.Tk):
         self._t_partial = ""
         self._l_turns: list[list[str]] = []
         self._l_current: list[str] = []
+        self._l_partial = ""
         self._source_opts: list[tuple[str, str]] = []
         self._out_opts: list[tuple[str, str]] = []
 
@@ -412,13 +413,19 @@ class ClientUI(tk.Tk):
                 self._t_current = []
                 self._t_partial = ""
                 self._render_transcribed()
-            if self._l_current:
-                self._l_turns.append(self._l_current)
+            if self._l_current or self._l_partial:
+                if self._l_current:
+                    self._l_turns.append(self._l_current)
                 self._l_current = []
+                self._l_partial = ""
                 self._render_translated()
+        elif message.type == "translation_partial":
+            self._l_partial = data.get("text", "") or ""
+            self._render_translated()
         elif message.type == "translation":
             if data.get("text"):
                 self._l_current.append(data["text"])
+            self._l_partial = ""
             self._render_translated()
         elif message.type == "error":
             self.status_var.set(f"Server: {data.get('detail', '')}")
@@ -470,7 +477,7 @@ class ClientUI(tk.Tk):
 
     def _clear_context(self) -> None:
         self._t_turns.clear(); self._t_current.clear(); self._t_partial = ""
-        self._l_turns.clear(); self._l_current.clear()
+        self._l_turns.clear(); self._l_current.clear(); self._l_partial = ""
         self._render_transcribed(); self._render_translated()
         self._run_control(lambda client: client.clear_context())
 
@@ -752,10 +759,10 @@ class ClientUI(tk.Tk):
         current = self._turn_text(self._l_current)
         if current:
             blocks.append(current)
-        value = "\n\n".join(blocks)
+        value = "\n\n".join(filter(None, [*blocks, self._l_partial]))
         self._replace_text(
             self.translated, value or "Waiting for translation...",
-            placeholder=not value, gray_text=current,
+            placeholder=not value, gray_text=self._l_partial,
         )
 
     @staticmethod

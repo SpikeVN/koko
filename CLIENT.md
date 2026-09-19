@@ -53,6 +53,7 @@ microphone audio, JSON frames are control.
 | `partial` | `text` | temporary ASR guess for the current speech cycle |
 | `final` | `text` | confirmed ASR segment (per ~5 s of speech) |
 | `speak` | `text` | transcript being sent to the LLM |
+| `translation_partial` | `text` | temporary token-level translation preview for the current sentence |
 | `translation` | `text` | LLM's Vietnamese translation |
 | `error` | `detail` | any exception message surfaced to the client |
 
