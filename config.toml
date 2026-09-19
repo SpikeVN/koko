@@ -109,7 +109,7 @@ temperature = 0.3
 # Max tokens per translation turn. ~256 covers a several-word burst fine.
 max_tokens = 256
 # Number of prior translated sentences included in the system message.
-context_messages = 3
+context_messages = 5
 
 [tts]
 # --- Text-to-speech backend ------------------------------------------------

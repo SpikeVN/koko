@@ -33,7 +33,7 @@ model = "Qwen3.6-35B-A3B"
 api_key = "dummy"
 temperature = 0.3
 max_tokens = 256
-context_messages = 3
+context_messages = 5
 
 [tts]
 backend = "vieneu"

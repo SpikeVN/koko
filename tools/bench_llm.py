@@ -17,6 +17,7 @@ Metrics per utterance (then aggregated):
 from __future__ import annotations
 
 import asyncio
+import argparse
 import json
 import logging
 import statistics
@@ -29,7 +30,7 @@ import httpx
 logging.disable(logging.CRITICAL)
 sys.path.insert(0, ".")
 from koko.engine.config import load_config  # noqa: E402
-from koko.engine.llm import LlmStage, _token_text  # noqa: E402
+from koko.engine.llm import build_system_prompt, _token_text  # noqa: E402
 
 TIMEOUT = 120
 # Input side: how long of a speech window each translation request covers
@@ -53,7 +54,6 @@ MODEL = LLM_CFG.model
 TEMPERATURE = LLM_CFG.temperature
 MAX_TOKENS = LLM_CFG.max_tokens
 CONTEXT_MESSAGES = max(0, LLM_CFG.context_messages)
-SYSTEM = LlmStage.SYSTEM
 
 # Full source transcript (headers/speaker labels already stripped, matching
 # what the ASR stage would actually emit for translation).
@@ -275,16 +275,13 @@ def _ends_sentence(buf: str, max_chars: int) -> bool:
     return buf.rstrip().endswith(tuple(_SENTENCE_END)) or len(buf) >= max_chars
 
 
-async def bench_utterance(client: httpx.AsyncClient, messages: list[dict], target_language: str) -> dict:
+async def bench_utterance(client: httpx.AsyncClient, messages: list[dict]) -> dict:
     payload = {
         "model": MODEL,
         "stream": True,
         "temperature": TEMPERATURE,
         "max_tokens": MAX_TOKENS,
-        "messages": [
-            {"role": "system", "content": SYSTEM + f" Ngôn ngữ cần dịch đến: {target_language}."},
-            *messages,
-        ],
+        "messages": messages,
     }
     t_start = time.perf_counter()
     ttft = None
@@ -352,51 +349,63 @@ def _fmt_row(label, vals, unit="ms"):
 
 
 async def main():
-    max_windows = int(sys.argv[1]) if len(sys.argv) > 1 else 0
-    seconds_per_window = float(sys.argv[2]) if len(sys.argv) > 2 else WINDOW_SECONDS
-    n_runs = int(sys.argv[3]) if len(sys.argv) > 3 else 1
-    target_language = sys.argv[4] if len(sys.argv) > 4 else "tiếng Việt"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("max_windows", nargs="?", type=int, default=0)
+    parser.add_argument("seconds_per_window", nargs="?", type=float,
+                        default=WINDOW_SECONDS)
+    parser.add_argument("runs", nargs="?", type=int, default=1)
+    parser.add_argument("target_language", nargs="?", default="tiếng Việt")
+    parser.add_argument("--endpoint", "--base-url", dest="endpoint",
+                        help="custom llama-server OpenAI base URL, including /v1")
+    args = parser.parse_args()
+
+    max_windows = args.max_windows
+    seconds_per_window = args.seconds_per_window
+    n_runs = args.runs
+    target_language = args.target_language
+    endpoint = args.endpoint or BASE_URL
 
     windows = split_windows(SOURCE["text"], seconds_per_window)
     if max_windows and max_windows < len(windows):
         windows = windows[:max_windows]
 
-    system = SYSTEM + f" Ngôn ngữ cần dịch đến: {target_language}."
-
-    def build_messages(previous_translations, u):
-        system_content = system
-        if previous_translations and CONTEXT_MESSAGES:
-            system_content += (
-                "\n\nCác câu đã dịch gần đây (chỉ dùng để giữ mạch văn; "
-                "không nhắc lại chúng):\n- "
-                + "\n- ".join(previous_translations[-CONTEXT_MESSAGES:])
+    def build_messages(previous_context, u):
+        context = ""
+        if previous_context and CONTEXT_MESSAGES:
+            history = previous_context[-CONTEXT_MESSAGES:]
+            context = (
+                "\n\n## Transcript\n"
+                + " ".join(source for source, _ in history)
+                + "\n\n## Previous translation\n"
+                + " ".join(translation for _, translation in history)
             )
-        return [
-            {"role": "system", "content": system_content},
-            {"role": "user", "content": u},
-        ]
+        user_content = (
+            "%s%s\n\n## Current transcript fragment to translate\n%s"
+            % (build_system_prompt(target_language), context, u)
+        )
+        return [{"role": "user", "content": user_content}]
 
     log_path = "bench_llm.log"
     logf = open(log_path, "a", encoding="utf-8")
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    logf.write("\n===== run %s | %s -> %s | model=%s | windows=%d x %.1fs | ctx=%d =====\n"
-               % (stamp, "en", target_language, MODEL, len(windows), seconds_per_window,
+    logf.write("\n===== run %s | endpoint=%s | %s -> %s | model=%s | windows=%d x %.1fs | ctx=%d =====\n"
+               % (stamp, endpoint, "en", target_language, MODEL, len(windows), seconds_per_window,
                   CONTEXT_MESSAGES))
     logf.flush()
 
     print("source : %s (%d chars)" % (SOURCE["title"], len(SOURCE["text"])))
-    print("windows: %d x %.1fs speech (~%d chars each), context = last window + its translation"
+    print("windows: %d x %.1fs speech (~%d chars each), context = prior source + translation pairs"
           % (len(windows), seconds_per_window, int(seconds_per_window * SPEECH_CHARS_PER_SEC)))
-    print("endpoint: %s  model: %s  target: %s" % (BASE_URL, MODEL, target_language))
+    print("endpoint: %s  model: %s  target: %s" % (endpoint, MODEL, target_language))
 
-    async with httpx.AsyncClient(base_url=BASE_URL, timeout=TIMEOUT) as client:
+    async with httpx.AsyncClient(base_url=endpoint, timeout=TIMEOUT) as client:
         for run in range(n_runs):
             print("\n=== run %d ===" % run)
             per = []
-            previous_translations = []
+            previous_context = []
             for i, u in enumerate(windows):
-                messages = build_messages(previous_translations, u)
-                p = await bench_utterance(client, messages, target_language)
+                messages = build_messages(previous_context, u)
+                p = await bench_utterance(client, messages)
                 per.append(p)
                 print("  #%02d prompt:" % i)
                 for m in messages:
@@ -410,7 +419,7 @@ async def main():
                 logf.write("[%02d] out: %s\n" % (i, p["out"].strip()))
                 logf.flush()
                 if p["out"].strip():
-                    previous_translations.append(p["out"].strip())
+                    previous_context.append((u, p["out"].strip()))
             n_tok_total = sum(p["n_tokens"] for p in per)
             wall_total = sum(p["wall"] for p in per) / 1000.0
             tok_total_s = n_tok_total / wall_total if wall_total > 0 else float("nan")

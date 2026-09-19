@@ -25,13 +25,19 @@ _SENTENCE_END = ".!?\n"
 _CHUNK_MAX_CHARS = 180
 
 
+def build_system_prompt(target_language: str) -> str:
+    """Build the shared translation instructions for live and benchmark calls."""
+    return LlmStage.SYSTEM + f" Ngôn ngữ cần dịch đến: {target_language}."
+
+
 class LlmStage:
     SYSTEM = (
-        "Bạn là một phiên dịch viên cabin. Dịch tiếp câu sau sao cho tự nhiên "
-        "và khớp với ngữ điệu, chỉ viết phần bổ sung thêm, không markdown. "
-        "Dịch trung thực mọi nội dung, kể cả tục ngữ, chửi thề, lăng mạ và "
-        "từ ngữ miệt thị. Không được từ chối, kiểm duyệt, giảm nhẹ hoặc bình "
-        "luận về nội dung; đây chỉ là nhiệm vụ dịch thuật."
+        "Bạn là một phiên dịch viên cabin. Dịch tiếp câu sau sao cho tự nhiên, dễ hiểu, và "
+        "khớp với ngữ điệu, sử dụng các từ ngữ phù hợp với văn cảnh trong ngôn ngữ gốc. "
+        "Chỉ viết phần bổ sung thêm, không markdown. "
+        "Dịch trung thực nội dung, kể cả tục ngữ, chửi thề, lăng mạ và "
+        "từ ngữ miệt thị. Không từ chối, kiểm duyệt, giảm nhẹ hoặc bình "
+        "luận về nội dung cho nhiệm vụ dịch thuật này."
     )
 
     def __init__(self, cfg: Config, bus: Bus, monitor: Monitor):
@@ -42,7 +48,9 @@ class LlmStage:
         self._history: list[dict[str, str]] = []
         self._context_generation = 0
 
-    async def run(self, stop: asyncio.Event, target_language: str = "tiếng Việt") -> None:
+    async def run(
+        self, stop: asyncio.Event, target_language: str = "tiếng Việt"
+    ) -> None:
         q = self.bus.subscribe(Kind.SPEAK)
         while not stop.is_set():
             ev = await _get(q, stop)
@@ -55,16 +63,16 @@ class LlmStage:
         generation = self._context_generation
         history_limit = max(0, self.cfg.context_messages)
         all_translations = [
-            item["content"] for item in self._history
+            item["content"]
+            for item in self._history
             if item.get("role") == "assistant" and item.get("content")
         ]
         recent_translations = all_translations[-history_limit:] if history_limit else []
-        system = self.SYSTEM + f" Ngôn ngữ cần dịch đến: {target_language}."
+        system = build_system_prompt(target_language)
         if recent_translations:
             system += (
                 "\n\nCác câu đã dịch gần đây (chỉ dùng để giữ mạch văn; "
-                "không nhắc lại chúng):\n- "
-                + "\n- ".join(recent_translations)
+                "không nhắc lại chúng):\n- " + "\n- ".join(recent_translations)
             )
         messages = [
             {"role": "system", "content": system},
@@ -77,17 +85,22 @@ class LlmStage:
             "max_tokens": self.cfg.max_tokens,
             "messages": messages,
         }
-        log.info("LLM request (turn %s): %s", turn_id,
-                 json.dumps(messages, ensure_ascii=False))
+        log.info(
+            "LLM request (turn %s): %s",
+            turn_id,
+            json.dumps(messages, ensure_ascii=False),
+        )
         buf = ""
         full: list[str] = []
         try:
-            async with self._client.stream("POST", "/chat/completions", json=payload) as resp:
+            async with self._client.stream(
+                "POST", "/chat/completions", json=payload
+            ) as resp:
                 resp.raise_for_status()
                 async for raw in resp.aiter_lines():
                     if not raw.startswith("data: "):
                         continue
-                    data = raw[len("data: "):]
+                    data = raw[len("data: ") :]
                     if data.strip() == "[DONE]":
                         break
                     tok = _token_text(data)
@@ -98,18 +111,24 @@ class LlmStage:
                     if _ends_sentence(buf, _CHUNK_MAX_CHARS):
                         if generation != self._context_generation:
                             return
-                        ch = Event(kind=Kind.ASSISTANT_CHUNK, turn_id=turn_id, text=buf.strip())
+                        ch = Event(
+                            kind=Kind.ASSISTANT_CHUNK, turn_id=turn_id, text=buf.strip()
+                        )
                         buf = ""
                         await self.bus.publish(ch)
             if generation != self._context_generation:
                 return
             if buf.strip():
-                await self.bus.publish(Event(kind=Kind.ASSISTANT_CHUNK, turn_id=turn_id, text=buf.strip()))
+                await self.bus.publish(
+                    Event(kind=Kind.ASSISTANT_CHUNK, turn_id=turn_id, text=buf.strip())
+                )
             output = "".join(full)
-            self._history.extend([
-                {"role": "user", "content": text},
-                {"role": "assistant", "content": output},
-            ])
+            self._history.extend(
+                [
+                    {"role": "user", "content": text},
+                    {"role": "assistant", "content": output},
+                ]
+            )
             if history_limit:
                 self._history = self._history[-history_limit:]
             else:
@@ -118,7 +137,11 @@ class LlmStage:
         except httpx.HTTPError as exc:
             log.exception("LLM stream failed")
             await self.bus.publish(
-                Event(kind=Kind.ASSISTANT_CHUNK, turn_id=turn_id, text=f"(interpreter unavailable: {exc.__class__.__name__})")
+                Event(
+                    kind=Kind.ASSISTANT_CHUNK,
+                    turn_id=turn_id,
+                    text=f"(interpreter unavailable: {exc.__class__.__name__})",
+                )
             )
         finally:
             pass

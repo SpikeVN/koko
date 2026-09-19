@@ -9,6 +9,7 @@ COPY deploy/jetson/requirements.websocket.txt /tmp/requirements.txt
 RUN python3 -m pip install --no-cache-dir -r /tmp/requirements.txt
 
 COPY koko ./koko
+COPY tools/phonemize_server.py ./tools/phonemize_server.py
 COPY tts_model/voices_v3_turbo.json ./tts_model/voices_v3_turbo.json
 COPY tts_model/more_voices.json ./tts_model/more_voices.json
 

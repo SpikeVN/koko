@@ -137,6 +137,12 @@ class WsServer:
             if await self._port_ready(host, port):
                 log.info("using existing %s service at %s:%d", name, host, port)
                 continue
+            executable = Path(command[1])
+            if not executable.is_file():
+                raise RuntimeError(
+                    f"cannot start local {name} service: {executable} is missing; "
+                    "set [asr].start_local_services = false when using external services"
+                )
             if name == "phonemize":
                 command.extend(["--port", str(port)])
             log.info("starting local %s service", name)

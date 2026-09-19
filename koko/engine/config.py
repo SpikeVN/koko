@@ -55,7 +55,7 @@ class LlmConfig:
     api_key: str = "dummy"          # llama-server ignores it; kept for parity
     temperature: float = 0.3
     max_tokens: int = 256
-    context_messages: int = 3       # prior translated sentences included in the system message
+    context_messages: int = 5       # prior translated sentences included in the system message
 
 
 @dataclass
