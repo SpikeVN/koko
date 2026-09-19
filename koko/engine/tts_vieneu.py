@@ -221,17 +221,19 @@ class VieneuLite:
 
         self.sess_pre = _sess(vd / "vieneu_prefill.onnx", prov)
         self.sess_dec = _sess(vd / "vieneu_decode_step.onnx", prov)
-        # acoustic head is an int8 graph: CUDA session would just add DMA
-        # overhead around its CPU fall-back nodes, so pin it to CPU. It gets
-        # its own session options: spinning only for this tiny per-frame graph
-        # (global spinning steals CPU from CUDA host-side work).
+        # The acoustic head is an int8 graph. Keep the laptop auto path on CPU,
+        # but use CUDA when explicitly requested (the Jetson's CPU path is too
+        # slow for the per-frame RVQ loop). It gets its own session options:
+        # spinning only for this tiny per-frame graph (global spinning steals
+        # CPU from CUDA host-side work).
         so_ac = ort.SessionOptions()
         so_ac.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         so_ac.inter_op_num_threads = 1
         so_ac.intra_op_num_threads = 4
         so_ac.add_session_config_entry("session.intra_op.allow_spinning", "1")
-        self.sess_ac = _sess(vd / "vieneu_acoustic_cached.onnx",
-                             ["CPUExecutionProvider"], so_ac)
+        ac_prov = (prov if (execution_provider or "auto").lower() == "cuda"
+                   else ["CPUExecutionProvider"])
+        self.sess_ac = _sess(vd / "vieneu_acoustic_cached.onnx", ac_prov, so_ac)
         self._ac_cache_init()
         self.sess_codec_dec = _sess(cd / "moss_audio_tokenizer_decode_full.onnx",
                                     prov)

@@ -11,6 +11,8 @@ services:
     environment:
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "6942:6942"
     volumes:

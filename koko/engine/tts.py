@@ -81,6 +81,11 @@ class VieneuTts(TtsBackend):
         self.sample_rate = VieneuLite.SAMPLE_RATE
         log.info("vieneu (ONNX) loaded from %s (voice=%s)", self._model_path, self._voice)
 
+    def load(self) -> None:
+        """Load the ONNX model before the server accepts client sessions."""
+        with self._lock:
+            self._load()
+
     class Voice(TtsBackend):
         """A connection-local voice over a shared VieNeu inference model."""
 

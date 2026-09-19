@@ -190,6 +190,7 @@ class WsServer:
                              % (cfg.tts.backend, ", ".join(tts_backends)))
         if cfg.tts.backend == "vieneu":
             self.backend = VieneuTts(cfg)
+            await asyncio.get_running_loop().run_in_executor(None, self.backend.load)
             self.tts_voices = self.backend.list_voices()
         else:
             self.backend = NullTts()

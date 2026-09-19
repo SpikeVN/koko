@@ -28,7 +28,7 @@ no_new_words_s = 2.0
 
 [llm]
 # Set this to the reachable OpenAI-compatible LLM address for this Jetson.
-base_url = "http://127.0.0.1:8081/v1"
+base_url = "http://host.docker.internal:8081/v1"
 model = "Qwen3.6-35B-A3B"
 api_key = "dummy"
 temperature = 0.3
