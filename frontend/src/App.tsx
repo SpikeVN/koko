@@ -19,16 +19,23 @@ const languages = [
   { code: 'vi', label: 'Tiếng Việt' },
   { code: 'zh', label: '中文' },
   { code: 'ja', label: '日本語' },
+  { code: 'ko', label: '한국어' },
+  { code: 'fr', label: 'Français' },
+  { code: 'de', label: 'Deutsch' },
+  { code: 'es', label: 'Español' },
+  { code: 'it', label: 'Italiano' },
+  { code: 'pt', label: 'Português' },
+  { code: 'ru', label: 'Русский' },
+  { code: 'th', label: 'ไทย' },
+  { code: 'id', label: 'Bahasa Indonesia' },
+  { code: 'ar', label: 'العربية' },
+  { code: 'hi', label: 'हिन्दी' },
 ];
 
 function LoadingScreen() {
   return (
     <main class="relative mx-auto h-dvh w-screen max-w-[402px] overflow-hidden bg-white">
       <div class="absolute top-1/2 left-0 h-[496px] w-full -translate-y-1/2">
-        <div class="absolute top-0 left-0 w-full text-center font-['Caveat_Brush'] text-[20px] leading-[25px]">
-          <p>Speak freely.</p>
-          <p>Understand naturally</p>
-        </div>
         <div class="absolute top-[142px] left-1/2 h-[354px] w-[395px] -translate-x-1/2" aria-hidden="true">
           <img class="absolute top-[29px] left-[65px] h-[258px] w-[265px] rounded-[65px] object-cover" src="/assets/earth.png" />
           <img class="absolute top-[13px] left-0 h-[83px] w-[111px] object-contain" src="/assets/us-flag.png" />
