@@ -1,5 +1,6 @@
 # Keep these compatible with Python 3.8, the interpreter in JetPack 5 R35
 # jetson-containers images. onnxruntime and numpy come from the base image.
 httpx==0.24.1
+tokenizers==0.20.3
 tomli==2.0.1
 websockets==10.4
