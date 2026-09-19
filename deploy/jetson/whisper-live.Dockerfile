@@ -21,8 +21,7 @@ RUN python3 -m pip install --no-cache-dir tomli \
 # dependencies must continue to come from the Jetson base image.
 RUN python3 -m pip install --no-cache-dir -r /tmp/requirements.whisper-live.txt
 
-COPY engine/config.py ./engine/config.py
-COPY koko/whisper_live_server.py ./koko/whisper_live_server.py
+COPY koko ./koko
 
 EXPOSE 9090
 CMD ["python3", "-m", "koko.whisper_live_server", "--config", "/app/config.toml"]

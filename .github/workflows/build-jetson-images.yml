@@ -5,7 +5,7 @@ on:
     branches: [main]
     tags: ["v*.*.*"]
     paths:
-      - "engine/**"
+      - "koko/engine/**"
       - "koko/**"
       - "tools/phonemize_server.py"
       - "deploy/jetson/*.Dockerfile"
@@ -35,13 +35,13 @@ jobs:
         with:
           filters: |
             server:
-              - 'engine/**'
+              - 'koko/engine/**'
               - 'koko/**'
               - 'deploy/jetson/websocket.Dockerfile'
               - 'deploy/jetson/requirements.websocket.txt'
               - 'pyproject.toml'
             whisper:
-              - 'engine/config.py'
+              - 'koko/engine/config.py'
               - 'koko/whisper_live_server.py'
               - 'deploy/jetson/whisper-live.Dockerfile'
             phonemize:
