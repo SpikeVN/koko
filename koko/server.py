@@ -227,6 +227,9 @@ class WsServer:
         try:
             try:
                 await self._session(ws)
+            except websockets.ConnectionClosed:
+                log.info("client disconnected without a close frame: %s",
+                         ws.remote_address)
             except Exception:
                 log.exception("session crashed")
                 try:

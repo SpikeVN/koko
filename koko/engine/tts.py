@@ -218,8 +218,14 @@ class AudioPlayer:
 async def _get(q: asyncio.Queue, stop: asyncio.Event):
     get_task = asyncio.create_task(q.get())
     stop_task = asyncio.create_task(stop.wait())
-    done, _ = await asyncio.wait({get_task, stop_task}, return_when=asyncio.FIRST_COMPLETED)
-    if stop.is_set():
-        get_task.cancel()
-        return None
-    return get_task.result()
+    try:
+        done, _ = await asyncio.wait(
+            {get_task, stop_task}, return_when=asyncio.FIRST_COMPLETED)
+        if stop_task in done or stop.is_set():
+            return None
+        return get_task.result()
+    finally:
+        for task in (get_task, stop_task):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(get_task, stop_task, return_exceptions=True)
