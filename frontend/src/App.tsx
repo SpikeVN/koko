@@ -1,14 +1,35 @@
 import { For, Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
 import { ArrowRight, ChevronDown, Mic, MicOff, Volume2, VolumeX } from 'lucide-solid';
+import * as ort from 'onnxruntime-web/wasm';
+import nanoWasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.wasm?url';
 
 const SERVER_URL = 'wss://koko-api.falcolabs.org';
 const INPUT_RATE = 16_000;
 const INPUT_BLOCK_SIZE = 1024;
 
 type Voice = [string, string];
+type NanoVoice = { description: string; speaker_emb: number[]; style: number[][] };
 type CaptureSource = 'microphone' | 'tab';
+type SpeechSource = 'cloud' | 'nano';
 
 const MOTION_STORAGE_KEY = 'koko-motion-enabled';
+const SPEECH_SOURCE_STORAGE_KEY = 'koko-speech-source';
+const NANO_REVISION = 'aba295eb96a6fa6003ebe417cc1f2802a7adc1dc';
+const NANO_CACHE = `koko-vieneu-nano-${NANO_REVISION}`;
+const NANO_BASE_URL = `https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Nano/resolve/${NANO_REVISION}`;
+const NANO_VOICES_URL = '/assets/voices_v3_nano.json';
+const NANO_FILES = [
+  'config.json', 'constants.npz', 'text_encoder.onnx', 'duration_predictor.onnx',
+  'vector_estimator.onnx', 'codec_decoder.onnx', 'codec_encoder.onnx', 'denoiser.onnx',
+  'reference_encoder.onnx', 'speaker_encoder.onnx',
+];
+const NANO_FILE_SIZES: Record<string, number> = {
+  'config.json': 2_927, 'constants.npz': 53_448, 'text_encoder.onnx': 26_519_943,
+  'duration_predictor.onnx': 727_809, 'vector_estimator.onnx': 155_132_418,
+  'codec_decoder.onnx': 99_319_941, 'codec_encoder.onnx': 56_419_417,
+  'denoiser.onnx': 42_661_414, 'reference_encoder.onnx': 10_778_145,
+  'speaker_encoder.onnx': 28_303_423,
+};
 
 function Icon(props: { name: 'mic' | 'mic-off' | 'volume' | 'volume-off' | 'chevron' | 'arrow'; class?: string }) {
   return <Show when={props.name === 'mic'} fallback={<Show when={props.name === 'mic-off'} fallback={<Show when={props.name === 'volume'} fallback={<Show when={props.name === 'volume-off'} fallback={<Show when={props.name === 'chevron'} fallback={<ArrowRight class={props.class} aria-hidden="true" />}><ChevronDown class={props.class} aria-hidden="true" /></Show>}><VolumeX class={props.class} aria-hidden="true" /></Show>}><Volume2 class={props.class} aria-hidden="true" /></Show>}><MicOff class={props.class} aria-hidden="true" /></Show>}><Mic class={props.class} aria-hidden="true" /></Show>;
@@ -149,12 +170,17 @@ function App() {
   const [translation, setTranslation] = createSignal('');
   const [translationPartial, setTranslationPartial] = createSignal('');
   const [speakerEnabled, setSpeakerEnabled] = createSignal(true);
+  const [speechSource, setSpeechSource] = createSignal<SpeechSource>('cloud');
+  const [nanoProgress, setNanoProgress] = createSignal<number>();
+  const [nanoStatus, setNanoStatus] = createSignal('');
   const [motionEnabled, setMotionEnabled] = createSignal(true);
   const [captureSource, setCaptureSource] = createSignal<CaptureSource>('microphone');
   const [sourceLanguage, setSourceLanguage] = createSignal('en');
   const [targetLanguage, setTargetLanguage] = createSignal('vi');
   const [voices, setVoices] = createSignal<Voice[]>([]);
   const [voice, setVoice] = createSignal('');
+  const [nanoVoices, setNanoVoices] = createSignal<Record<string, NanoVoice>>({});
+  const [nanoVoice, setNanoVoice] = createSignal('Adam');
   const [error, setError] = createSignal('');
 
   let socket: WebSocket | undefined;
@@ -169,10 +195,169 @@ function App() {
   let nextPlaybackTime = 0;
   let outputRate = 48_000;
   const playbackSources = new Set<AudioBufferSourceNode>();
+  let nanoSessions: Record<string, ort.InferenceSession> | undefined;
+  let nanoConfig: { vocab: Record<string, number>; bos_id: number; eos_id: number; pad_id: number; flow_fps?: number } | undefined;
+  let nanoPhonemeId = 0;
+  const nanoPhonemeRequests = new Map<string, { resolve: (phonemes: string) => void; reject: (error: Error) => void }>();
+
+  const stopPlayback = () => {
+    playbackSources.forEach((source) => source.stop());
+    playbackSources.clear();
+    nextPlaybackTime = 0;
+  };
+
+  const playFloatAudio = (samples: Float32Array, rate: number) => {
+    if (!speakerEnabled() || !samples.length) return;
+    audioContext ??= new AudioContext();
+    const buffer = audioContext.createBuffer(1, samples.length, rate);
+    buffer.copyToChannel(new Float32Array(samples), 0);
+    const source = audioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(audioContext.destination);
+    playbackSources.add(source);
+    source.onended = () => playbackSources.delete(source);
+    nextPlaybackTime = Math.max(nextPlaybackTime, audioContext.currentTime);
+    source.start(nextPlaybackTime);
+    nextPlaybackTime += buffer.duration;
+  };
+
+  const getNanoFile = async (cache: Cache, file: string, onProgress: (received: number, total: number) => void) => {
+    const url = `${NANO_BASE_URL}/${file}`;
+    const cached = await cache.match(url);
+    if (cached) {
+      const size = Number(cached.headers.get('content-length')) || (await cached.clone().blob()).size;
+      onProgress(size, size);
+      return cached;
+    }
+    const response = await fetch(url);
+    if (!response.ok || !response.body) throw new Error(`Could not download ${file}.`);
+    const total = Number(response.headers.get('content-length')) || 0;
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.byteLength;
+      onProgress(received, total);
+    }
+    const stored = new Response(new Blob(chunks), { headers: { 'content-type': response.headers.get('content-type') ?? 'application/octet-stream', 'content-length': String(received) } });
+    await cache.put(url, stored.clone());
+    return stored;
+  };
+
+  const prepareNano = async () => {
+    if (nanoSessions) return;
+    setNanoStatus('Preparing VieNeu Nano...');
+    setNanoProgress(0);
+    const cache = await caches.open(NANO_CACHE);
+    // Sizes belong to the pinned revision, so total progress is known before downloading.
+    const sizes = new Map(Object.entries(NANO_FILE_SIZES));
+    const received = new Map<string, number>();
+    const updateProgress = (file: string, loaded: number, total: number) => {
+      received.set(file, loaded);
+      if (total) sizes.set(file, total);
+      const loadedBytes = [...received.values()].reduce((sum, value) => sum + value, 0);
+      const totalBytes = [...sizes.values()].reduce((sum, value) => sum + value, 0);
+      const progress = totalBytes ? Math.min(100, Math.round((loadedBytes / totalBytes) * 100)) : undefined;
+      setNanoProgress((current) => progress === undefined ? current : Math.max(current ?? 0, progress));
+    };
+    const files = new Map<string, Response>();
+    for (const file of NANO_FILES) files.set(file, await getNanoFile(cache, file, (loaded, total) => updateProgress(file, loaded, total)));
+    setNanoStatus('Starting VieNeu Nano...');
+    ort.env.wasm.wasmPaths = { wasm: nanoWasmUrl };
+    const sessions = await Promise.all(['text_encoder.onnx', 'duration_predictor.onnx', 'vector_estimator.onnx', 'codec_decoder.onnx'].map(async (file) => [file, await ort.InferenceSession.create(await files.get(file)!.arrayBuffer(), { executionProviders: ['wasm'] })] as const));
+    nanoSessions = Object.fromEntries(sessions);
+    nanoConfig = await files.get('config.json')!.json();
+    const voiceResponse = await fetch(NANO_VOICES_URL);
+    if (!voiceResponse.ok) throw new Error('Could not download VieNeu Nano voice presets.');
+    const voiceData = await voiceResponse.json() as { default_voice?: string; presets?: Record<string, NanoVoice> };
+    const presets = voiceData.presets ?? {};
+    setNanoVoices(presets);
+    if (!presets[nanoVoice()]) setNanoVoice(voiceData.default_voice ?? Object.keys(presets)[0] ?? '');
+    setNanoProgress(100);
+    setNanoStatus('VieNeu Nano model cached');
+  };
+
+  const phonemizeNano = (text: string) => new Promise<string>((resolve, reject) => {
+    if (socket?.readyState !== WebSocket.OPEN) {
+      reject(new Error('Connect to Project Koko before using VieNeu Nano.'));
+      return;
+    }
+    const id = String(++nanoPhonemeId);
+    nanoPhonemeRequests.set(id, { resolve, reject });
+    send({ type: 'nano_phonemize', id, text });
+  });
+
+  const normal = () => {
+    let spare: number | undefined;
+    return () => {
+      if (spare !== undefined) {
+        const value = spare;
+        spare = undefined;
+        return value;
+      }
+      let u = 0;
+      let v = 0;
+      while (!u) u = Math.random();
+      while (!v) v = Math.random();
+      const radius = Math.sqrt(-2 * Math.log(u));
+      spare = radius * Math.sin(2 * Math.PI * v);
+      return radius * Math.cos(2 * Math.PI * v);
+    };
+  };
+
+  const speakNano = async (text: string) => {
+    if (speechSource() !== 'nano' || !text) return;
+    if (targetLanguage() !== 'vi') {
+      setError('VieNeu Nano currently speaks Vietnamese only. Set the target language to Tiếng Việt.');
+      return;
+    }
+    try {
+      await prepareNano();
+      const sessions = nanoSessions;
+      const config = nanoConfig;
+      const preset = nanoVoices()[nanoVoice()];
+      if (!sessions || !config || !preset) throw new Error('VieNeu Nano is not ready.');
+      const phonemes = await phonemizeNano(text);
+      const ids = [config.bos_id, ...[...phonemes].flatMap((character) => config.vocab[character] === undefined ? [] : [config.vocab[character]]), config.eos_id];
+      const length = ids.length;
+      const idTensor = new ort.Tensor('int64', BigInt64Array.from(ids, BigInt), [1, length]);
+      const mask = new ort.Tensor('bool', new Uint8Array(length).fill(1), [1, length]);
+      const style = new ort.Tensor('float32', Float32Array.from(preset.style.flat()), [1, 50, 256]);
+      const speaker = new ort.Tensor('float32', Float32Array.from(preset.speaker_emb), [1, 192]);
+      const ctx = (await sessions['text_encoder.onnx'].run({ ids: idTensor, style })).ctx as ort.Tensor;
+      const logSeconds = (await sessions['duration_predictor.onnx'].run({ ctx, ctx_mask: mask, spk: speaker })).log_seconds.data as Float32Array;
+      const frames = Math.max(2, Math.round(Math.min(Math.exp(logSeconds[0]), 15) * (config.flow_fps ?? 15.625)));
+      const samples = new Float32Array(144 * frames);
+      const random = normal();
+      for (let index = 0; index < samples.length; index += 1) samples[index] = random();
+      let x = new ort.Tensor('float32', samples, [1, 144, frames]);
+      const steps = 8;
+      for (let index = 0; index < steps; index += 1) {
+        const time = index / steps;
+        const result = await sessions['vector_estimator.onnx'].run({ x, t: new ort.Tensor('float32', Float32Array.of(time), [1]), ctx, ctx_mask: mask, spk: speaker, style });
+        const velocity = result.v.data as Float32Array;
+        const next = new Float32Array(samples.length);
+        for (let sample = 0; sample < next.length; sample += 1) next[sample] = (x.data as Float32Array)[sample] + velocity[sample] / steps;
+        x = new ort.Tensor('float32', next, [1, 144, frames]);
+      }
+      const waveform = (await sessions['codec_decoder.onnx'].run({ x })).wav.data as Float32Array;
+      for (let index = 0; index < waveform.length; index += 1) waveform[index] = Math.max(-1, Math.min(1, waveform[index]));
+      playFloatAudio(waveform, 24_000);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'VieNeu Nano could not synthesize this translation.');
+    }
+  };
 
   onMount(() => {
     const savedMotion = window.localStorage.getItem(MOTION_STORAGE_KEY);
     if (savedMotion !== null) setMotionEnabled(savedMotion === 'true');
+    const savedSpeechSource = window.localStorage.getItem(SPEECH_SOURCE_STORAGE_KEY);
+    if (savedSpeechSource === 'cloud' || savedSpeechSource === 'nano') setSpeechSource(savedSpeechSource);
+    const savedNanoVoice = window.localStorage.getItem('koko-nano-voice');
+    if (savedNanoVoice) setNanoVoice(savedNanoVoice);
     const timer = window.setTimeout(() => setLoading(false), 1500);
     onCleanup(() => window.clearTimeout(timer));
   });
@@ -184,8 +369,8 @@ function App() {
   const handleMessage = async (event: MessageEvent) => {
     if (typeof event.data !== 'string') {
       const bytes = event.data instanceof ArrayBuffer ? event.data : await event.data.arrayBuffer();
+      if (speechSource() !== 'cloud' || !speakerEnabled()) return;
       if (!audioContext) audioContext = new AudioContext({ sampleRate: outputRate });
-      if (!speakerEnabled()) return;
       const samples = new Int16Array(bytes);
       const buffer = audioContext.createBuffer(1, samples.length, outputRate);
       const channel = buffer.getChannelData(0);
@@ -203,6 +388,12 @@ function App() {
     const message = JSON.parse(event.data) as Record<string, unknown>;
     if (message.type === 'audio') {
       outputRate = Number(message.rate) || 48_000;
+    } else if (message.type === 'nano_phonemes') {
+      const request = nanoPhonemeRequests.get(String(message.id ?? ''));
+      if (request) {
+        nanoPhonemeRequests.delete(String(message.id));
+        request.resolve(String(message.phonemes ?? ''));
+      }
     } else if (message.type === 'ready') {
       setConnected(true);
       const serverVoices = (message.tts_voices as Voice[] | undefined) ?? [];
@@ -223,6 +414,7 @@ function App() {
       const text = String(message.text ?? '');
       if (text) setTranslation((current) => current ? `${current} ${text}` : text);
       setTranslationPartial('');
+      if (text) void speakNano(text);
     }
     else if (message.type === 'error') setError(String(message.detail ?? 'Server error'));
   };
@@ -307,10 +499,26 @@ function App() {
   const toggleSpeaker = () => {
     setSpeakerEnabled((enabled) => !enabled);
     if (!speakerEnabled()) {
-      playbackSources.forEach((source) => source.stop());
-      nextPlaybackTime = 0;
+      stopPlayback();
     }
     if (speakerEnabled() && audioContext?.state === 'suspended') void audioContext.resume();
+  };
+  const updateSpeechSource = async (selected: SpeechSource) => {
+    stopPlayback();
+    if (selected === 'nano') {
+      try {
+        await prepareNano();
+        setNanoStatus('');
+        setNanoProgress(undefined);
+      } catch (error) {
+        setNanoProgress(undefined);
+        setNanoStatus('');
+        setError(error instanceof Error ? error.message : 'Unable to prepare VieNeu Nano.');
+        return;
+      }
+    }
+    setError('');
+    setSpeechSource(selected);
   };
   const updateSourceLanguage = (language: string) => { setSourceLanguage(language); send({ type: 'asr_language', language }); };
   const updateTargetLanguage = (language: string) => {
@@ -358,6 +566,14 @@ function App() {
   });
 
   createEffect(() => {
+    window.localStorage.setItem(SPEECH_SOURCE_STORAGE_KEY, speechSource());
+  });
+
+  createEffect(() => {
+    window.localStorage.setItem('koko-nano-voice', nanoVoice());
+  });
+
+  createEffect(() => {
     sourceText();
     sourcePartial();
     sourcePanel?.scrollTo({ top: sourcePanel.scrollHeight });
@@ -371,6 +587,7 @@ function App() {
 
   onCleanup(() => {
     stopRecording();
+    stopPlayback();
     send({ type: 'bye' });
     socket?.close();
     void audioContext?.close();
@@ -405,7 +622,10 @@ function App() {
         </section>
         <section class="flex flex-col gap-4">
           <h2 class="text-sm font-semibold">Phát phiên dịch</h2>
-          <label class="relative flex min-h-12 items-center rounded-full text-left text-sm"><WiggleBorder type="pill" motionEnabled={motionEnabled()} /><div class="pointer-events-none absolute inset-0 z-0 rounded-full bg-white/70" /><select class="absolute inset-0 z-[3] h-full w-full cursor-pointer appearance-none bg-transparent px-5 pr-10 text-black outline-none" value={voice()} onChange={(event) => updateVoice(event.currentTarget.value)}><option value="">Giọng mặc định</option><For each={voices()}>{(item) => <option value={item[0]}>{item[0]}</option>}</For></select><Icon name="chevron" class="pointer-events-none absolute right-3 z-[2] size-5" /></label>
+            <label class="relative flex min-h-12 items-center rounded-full text-left text-sm"><WiggleBorder type="pill" motionEnabled={motionEnabled()} /><div class="pointer-events-none absolute inset-0 z-0 rounded-full bg-white/70" /><select class="absolute inset-0 z-[3] h-full w-full cursor-pointer appearance-none bg-transparent px-5 pr-10 text-black outline-none" value={speechSource()} onChange={(event) => void updateSpeechSource(event.currentTarget.value as SpeechSource)}><option value="cloud">Cloud</option><option value="nano">Browser (VieNeu Nano)</option></select><Icon name="chevron" class="pointer-events-none absolute right-3 z-[2] size-5" /></label>
+           <Show when={nanoStatus()}><div class="text-xs" role="status"><div class="mb-1 flex justify-between"><span>{nanoStatus()}</span><Show when={nanoProgress() !== undefined}><span>{nanoProgress()}%</span></Show></div><Show when={nanoProgress() !== undefined}><div class="h-1 overflow-hidden rounded bg-neutral-200"><div class="h-full bg-black transition-[width]" style={{ width: `${nanoProgress()}%` }} /></div></Show></div></Show>
+            <Show when={speechSource() === 'cloud'}><label class="relative flex min-h-12 items-center rounded-full text-left text-sm"><WiggleBorder type="pill" motionEnabled={motionEnabled()} /><div class="pointer-events-none absolute inset-0 z-0 rounded-full bg-white/70" /><select class="absolute inset-0 z-[3] h-full w-full cursor-pointer appearance-none bg-transparent px-5 pr-10 text-black outline-none" value={voice()} onChange={(event) => updateVoice(event.currentTarget.value)}><option value="">Giọng mặc định</option><For each={voices()}>{(item) => <option value={item[0]}>{item[0]}</option>}</For></select><Icon name="chevron" class="pointer-events-none absolute right-3 z-[2] size-5" /></label></Show>
+            <Show when={speechSource() === 'nano'}><label class="relative flex min-h-12 items-center rounded-full text-left text-sm"><WiggleBorder type="pill" motionEnabled={motionEnabled()} /><div class="pointer-events-none absolute inset-0 z-0 rounded-full bg-white/70" /><select class="absolute inset-0 z-[3] h-full w-full cursor-pointer appearance-none bg-transparent px-5 pr-10 text-black outline-none" value={nanoVoice()} onChange={(event) => setNanoVoice(event.currentTarget.value)}><For each={Object.entries(nanoVoices())}>{([name, preset]) => <option value={name}>{preset.description ? `${name} - ${preset.description}` : name}</option>}</For></select><Icon name="chevron" class="pointer-events-none absolute right-3 z-[2] size-5" /></label></Show>
           <label class="relative flex min-h-12 items-center rounded-full text-left text-sm"><WiggleBorder type="pill" motionEnabled={motionEnabled()} /><div class="pointer-events-none absolute inset-0 z-0 rounded-full bg-white/70" /><select class="absolute inset-0 z-[3] h-full w-full cursor-pointer appearance-none bg-transparent px-5 pr-10 text-black outline-none" value={captureSource()} onChange={(event) => void updateCaptureSource(event.currentTarget.value as CaptureSource)}><option value="microphone">Microphone</option><option value="tab">Browser tab</option></select><Icon name="chevron" class="pointer-events-none absolute right-3 z-[2] size-5" /></label>
         </section>
         <section class="grid grid-cols-2 gap-4">

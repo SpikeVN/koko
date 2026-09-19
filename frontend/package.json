@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "lucide-solid": "^1.47.0",
+    "onnxruntime-web": "^1.30.0",
     "solid-js": "^1.9.9"
   }
 }

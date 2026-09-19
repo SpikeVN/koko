@@ -105,16 +105,22 @@ class VieneuTts(TtsBackend):
             self._parent._validate_voice(voice)
             self.voice = voice
 
+        async def phonemize(self, text: str) -> str | None:
+            return await self._parent.phonemize(text)
+
     def for_voice(self, voice: str) -> "Voice":
         """Create a per-session voice selector without duplicating ONNX state."""
         return self.Voice(self, voice or self._voice)
 
     async def speak(self, text: str, voice: str | None = None) -> np.ndarray:
-        phonemes = await self._phonemizer.run(text)
+        phonemes = await self.phonemize(text)
         if not phonemes:
             return np.zeros(0, dtype=np.float32)
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._synth, phonemes, voice or self._voice)
+
+    async def phonemize(self, text: str) -> str | None:
+        return await self._phonemizer.run(text)
 
     def _synth(self, phonemes: str, voice: str) -> np.ndarray:
         with self._lock:

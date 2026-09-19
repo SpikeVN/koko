@@ -381,6 +381,16 @@ class WsServer:
                             await self._ctl(ws, {"type": "error", "detail": str(exc)})
                         else:
                             await self._ctl(ws, {"type": "tts_voice", "voice": voice})
+                elif ctl.get("type") == "nano_phonemize":
+                    request_id = ctl.get("id")
+                    text = ctl.get("text")
+                    if not isinstance(request_id, str) or not isinstance(text, str):
+                        await self._ctl(ws, {"type": "error", "detail": "nano_phonemize requires id and text strings"})
+                    elif not isinstance(backend, VieneuTts.Voice):
+                        await self._ctl(ws, {"type": "error", "detail": "Nano phonemization requires the vieneu backend"})
+                    else:
+                        phonemes = await backend.phonemize(text)
+                        await self._ctl(ws, {"type": "nano_phonemes", "id": request_id, "phonemes": phonemes or ""})
                 elif ctl.get("type") == "asr_language":
                     language = ctl.get("language")
                     if not isinstance(language, str) or not language:
