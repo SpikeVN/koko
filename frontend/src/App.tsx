@@ -58,16 +58,111 @@ const targetLanguageNames: Record<string, string> = {
   ru: 'Russian', th: 'Thai', id: 'Indonesian', ar: 'Arabic', hi: 'Hindi',
 };
 
-function LoadingScreen() {
+function LoadingScreen(props: { motionEnabled?: boolean; onDismiss?: () => void }) {
   return (
-    <main class="relative mx-auto h-dvh w-screen max-w-[402px] overflow-hidden bg-white">
+    <main
+      class="relative mx-auto h-dvh w-screen max-w-[402px] overflow-hidden bg-white select-none"
+      onClick={() => props.onDismiss?.()}
+    >
       <div class="absolute top-1/2 left-0 h-[496px] w-full -translate-y-1/2">
         <div class="absolute top-[142px] left-1/2 h-[354px] w-[395px] -translate-x-1/2" aria-hidden="true">
-          <img class="absolute top-[29px] left-[65px] h-[258px] w-[265px] rounded-[65px] object-cover" src="/assets/earth.png" />
-          <img class="absolute top-[13px] left-0 h-[83px] w-[111px] object-contain" src="/assets/us-flag.png" />
-          <img class="absolute top-0 left-[280px] h-[106px] w-[111px] object-contain" src="/assets/vietnam-flag.png" />
-          <img class="absolute top-[234px] left-[14px] h-[114px] w-[115px] object-contain" src="/assets/china-flag.png" />
-          <img class="absolute top-[232px] left-[251px] h-[122px] w-[144px] object-contain" src="/assets/japan-flag.png" />
+          {/* Gentle sway wrapper: sways both globe and flags together */}
+          <div
+            class="relative size-full origin-[197.5px_158px]"
+            classList={{
+              'animate-koko-sway': props.motionEnabled !== false,
+            }}
+          >
+            {/* Globe: rotates smoothly on its own center */}
+            <div
+              class="absolute top-[28px] left-[67px] size-[260px] origin-center"
+              classList={{
+                'animate-koko-spin': props.motionEnabled !== false,
+              }}
+            >
+              <img class="size-full object-contain pointer-events-none select-none" src="/assets/earth.png" alt="Globe" />
+            </div>
+
+            {/* Orbit container: flags rotate along with the globe around earth's center */}
+            <div
+              class="absolute inset-0 origin-[197.5px_158px]"
+              classList={{
+                'animate-koko-orbit': props.motionEnabled !== false,
+              }}
+            >
+              {/* US Flag */}
+              <div
+                class="absolute top-[13px] left-0 h-[83px] w-[111px] origin-center"
+                classList={{
+                  'animate-koko-counter-spin': props.motionEnabled !== false,
+                }}
+              >
+                <div
+                  class="size-full origin-center"
+                  classList={{
+                    'animate-koko-flag-sway': props.motionEnabled !== false,
+                  }}
+                  style={{ "animation-delay": "0s" }}
+                >
+                  <img class="size-full object-contain pointer-events-none select-none" src="/assets/us-flag.png" alt="US Flag" />
+                </div>
+              </div>
+
+              {/* Vietnam Flag */}
+              <div
+                class="absolute top-0 left-[280px] h-[106px] w-[111px] origin-center"
+                classList={{
+                  'animate-koko-counter-spin': props.motionEnabled !== false,
+                }}
+              >
+                <div
+                  class="size-full origin-center"
+                  classList={{
+                    'animate-koko-flag-sway': props.motionEnabled !== false,
+                  }}
+                  style={{ "animation-delay": "0.6s" }}
+                >
+                  <img class="size-full object-contain pointer-events-none select-none" src="/assets/vietnam-flag.png" alt="Vietnam Flag" />
+                </div>
+              </div>
+
+              {/* China Flag */}
+              <div
+                class="absolute top-[234px] left-[14px] h-[114px] w-[115px] origin-center"
+                classList={{
+                  'animate-koko-counter-spin': props.motionEnabled !== false,
+                }}
+              >
+                <div
+                  class="size-full origin-center"
+                  classList={{
+                    'animate-koko-flag-sway': props.motionEnabled !== false,
+                  }}
+                  style={{ "animation-delay": "1.2s" }}
+                >
+                  <img class="size-full object-contain pointer-events-none select-none" src="/assets/china-flag.png" alt="China Flag" />
+                </div>
+              </div>
+
+              {/* Japan Flag */}
+              <div
+                class="absolute top-[232px] left-[251px] h-[122px] w-[144px] origin-center"
+                classList={{
+                  'animate-koko-counter-spin': props.motionEnabled !== false,
+                }}
+              >
+                <div
+                  class="size-full origin-center"
+                  classList={{
+                    'animate-koko-flag-sway': props.motionEnabled !== false,
+                  }}
+                  style={{ "animation-delay": "1.8s" }}
+                >
+                  <img class="size-full object-contain pointer-events-none select-none" src="/assets/japan-flag.png" alt="Japan Flag" />
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
       <div class="absolute top-[58px] left-1/2 w-[126px] -translate-x-1/2 text-center">
@@ -557,6 +652,11 @@ function App() {
     send({ type: 'clear_context' });
   };
 
+  const sourceLabel = () => languages.find((l) => l.code === sourceLanguage())?.label ?? sourceLanguage();
+  const targetLabel = () => languages.find((l) => l.code === targetLanguage())?.label ?? targetLanguage();
+  const voiceLabel = () => voice() || 'Giọng mặc định';
+  const captureLabel = () => captureSource() === 'microphone' ? 'Micro' : 'Browser tab';
+
   createEffect(() => {
     if (!loading() && !socket) void connect().catch(() => undefined);
   });
@@ -593,7 +693,7 @@ function App() {
     void audioContext?.close();
   });
 
-  return <Show when={!loading()} fallback={<LoadingScreen />}>
+  return <Show when={!loading()} fallback={<LoadingScreen motionEnabled={motionEnabled()} onDismiss={() => setLoading(false)} />}>
     <main class="relative mx-auto flex min-h-dvh w-full flex-col items-center gap-6 overflow-y-auto bg-white px-6 py-10 md:h-dvh md:flex-row md:gap-12 md:overflow-hidden md:px-12">
       <section class="flex w-full max-w-sm flex-col gap-6 md:h-[calc(100dvh-4rem)] md:max-w-none md:flex-1">
         <section class="relative flex min-h-52 flex-1 flex-col md:min-h-0">
@@ -601,7 +701,7 @@ function App() {
           <h2 class="relative z-[2] mb-2 text-sm font-semibold">Transcription</h2>
           <article class="relative z-[1] min-h-0 flex-1 rounded-2xl pb-4">
             <WiggleBorder motionEnabled={motionEnabled()} />
-            <div class="pointer-events-none absolute inset-0 z-0 rounded-2xl bg-white/85" />
+            <div class="pointer-events-none absolute inset-0 z-0 rounded-2xl bg-[url('/assets/grid_paper.png')] bg-repeat opacity-95" />
             <p ref={sourcePanel} class="relative z-[2] h-full overflow-y-auto px-8 py-5 text-sm leading-relaxed"><Show when={sourceText() || sourcePartial()} fallback={<span class="text-neutral-500">{recording() ? 'Listening...' : 'Your words will appear here'}</span>}><span>{sourceText()}</span><Show when={sourcePartial()}><span>{sourceText() && ' '}</span><span class="text-neutral-500">{sourcePartial()}</span></Show></Show></p>
           </article>
         </section>
@@ -609,7 +709,7 @@ function App() {
           <h2 class="relative z-[2] mb-2 text-sm font-semibold">Translation</h2>
           <article class="relative z-[1] min-h-0 flex-1 rounded-2xl pb-4">
             <WiggleBorder motionEnabled={motionEnabled()} />
-            <div class="pointer-events-none absolute inset-0 z-0 rounded-2xl bg-white/85" />
+            <div class="pointer-events-none absolute inset-0 z-0 rounded-2xl bg-[url('/assets/grid_paper.png')] bg-repeat opacity-95" />
             <p ref={translationPanel} class="relative z-[2] h-full overflow-y-auto px-8 py-5 text-sm leading-relaxed"><Show when={translation() || translationPartial()} fallback={<span class="text-neutral-500">Your translation will appear here</span>}><span>{translation()}</span><Show when={translationPartial()}><span>{translation() && ' '}</span><span class="text-neutral-500">{translationPartial()}</span></Show></Show></p>
           </article>
         </section>
@@ -622,10 +722,10 @@ function App() {
         </section>
         <section class="flex flex-col gap-4">
           <h2 class="text-sm font-semibold">Phát phiên dịch</h2>
-            <label class="relative flex min-h-12 items-center rounded-full text-left text-sm"><WiggleBorder type="pill" motionEnabled={motionEnabled()} /><div class="pointer-events-none absolute inset-0 z-0 rounded-full bg-white/70" /><select class="absolute inset-0 z-[3] h-full w-full cursor-pointer appearance-none bg-transparent px-5 pr-10 text-black outline-none" value={speechSource()} onChange={(event) => void updateSpeechSource(event.currentTarget.value as SpeechSource)}><option value="cloud">Cloud</option><option value="nano">Browser (VieNeu Nano)</option></select><Icon name="chevron" class="pointer-events-none absolute right-3 z-[2] size-5" /></label>
-           <Show when={nanoStatus()}><div class="text-xs" role="status"><div class="mb-1 flex justify-between"><span>{nanoStatus()}</span><Show when={nanoProgress() !== undefined}><span>{nanoProgress()}%</span></Show></div><Show when={nanoProgress() !== undefined}><div class="h-1 overflow-hidden rounded bg-neutral-200"><div class="h-full bg-black transition-[width]" style={{ width: `${nanoProgress()}%` }} /></div></Show></div></Show>
-            <Show when={speechSource() === 'cloud'}><label class="relative flex min-h-12 items-center rounded-full text-left text-sm"><WiggleBorder type="pill" motionEnabled={motionEnabled()} /><div class="pointer-events-none absolute inset-0 z-0 rounded-full bg-white/70" /><select class="absolute inset-0 z-[3] h-full w-full cursor-pointer appearance-none bg-transparent px-5 pr-10 text-black outline-none" value={voice()} onChange={(event) => updateVoice(event.currentTarget.value)}><option value="">Giọng mặc định</option><For each={voices()}>{(item) => <option value={item[0]}>{item[0]}</option>}</For></select><Icon name="chevron" class="pointer-events-none absolute right-3 z-[2] size-5" /></label></Show>
-            <Show when={speechSource() === 'nano'}><label class="relative flex min-h-12 items-center rounded-full text-left text-sm"><WiggleBorder type="pill" motionEnabled={motionEnabled()} /><div class="pointer-events-none absolute inset-0 z-0 rounded-full bg-white/70" /><select class="absolute inset-0 z-[3] h-full w-full cursor-pointer appearance-none bg-transparent px-5 pr-10 text-black outline-none" value={nanoVoice()} onChange={(event) => setNanoVoice(event.currentTarget.value)}><For each={Object.entries(nanoVoices())}>{([name, preset]) => <option value={name}>{preset.description ? `${name} - ${preset.description}` : name}</option>}</For></select><Icon name="chevron" class="pointer-events-none absolute right-3 z-[2] size-5" /></label></Show>
+          <label class="relative flex min-h-12 items-center rounded-full text-left text-sm"><WiggleBorder type="pill" motionEnabled={motionEnabled()} /><div class="pointer-events-none absolute inset-0 z-0 rounded-full bg-white/70" /><select class="absolute inset-0 z-[3] h-full w-full cursor-pointer appearance-none bg-transparent px-5 pr-10 text-black outline-none" value={speechSource()} onChange={(event) => void updateSpeechSource(event.currentTarget.value as SpeechSource)}><option value="cloud">Cloud</option><option value="nano">Browser (VieNeu Nano)</option></select><Icon name="chevron" class="pointer-events-none absolute right-3 z-[2] size-5" /></label>
+          <Show when={nanoStatus()}><div class="text-xs" role="status"><div class="mb-1 flex justify-between"><span>{nanoStatus()}</span><Show when={nanoProgress() !== undefined}><span>{nanoProgress()}%</span></Show></div><Show when={nanoProgress() !== undefined}><div class="h-1 overflow-hidden rounded bg-neutral-200"><div class="h-full bg-black transition-[width]" style={{ width: `${nanoProgress()}%` }} /></div></Show></div></Show>
+          <Show when={speechSource() === 'cloud'}><label class="relative flex min-h-12 items-center rounded-full text-left text-sm"><WiggleBorder type="pill" motionEnabled={motionEnabled()} /><div class="pointer-events-none absolute inset-0 z-0 rounded-full bg-[url('/assets/voice_bg.png')] bg-cover bg-center" /><select class="absolute inset-0 z-[3] h-full w-full cursor-pointer appearance-none bg-transparent px-5 pr-10 text-black outline-none" value={voice()} onChange={(event) => updateVoice(event.currentTarget.value)}><option value="">Giọng mặc định</option><For each={voices()}>{(item) => <option value={item[0]}>{item[0]}</option>}</For></select><Icon name="chevron" class="pointer-events-none absolute right-3 z-[2] size-5" /></label></Show>
+          <Show when={speechSource() === 'nano'}><label class="relative flex min-h-12 items-center rounded-full text-left text-sm"><WiggleBorder type="pill" motionEnabled={motionEnabled()} /><div class="pointer-events-none absolute inset-0 z-0 rounded-full bg-[url('/assets/voice_bg.png')] bg-cover bg-center" /><select class="absolute inset-0 z-[3] h-full w-full cursor-pointer appearance-none bg-transparent px-5 pr-10 text-black outline-none" value={nanoVoice()} onChange={(event) => setNanoVoice(event.currentTarget.value)}><For each={Object.entries(nanoVoices())}>{([name, preset]) => <option value={name}>{preset.description ? `${name} - ${preset.description}` : name}</option>}</For></select><Icon name="chevron" class="pointer-events-none absolute right-3 z-[2] size-5" /></label></Show>
           <label class="relative flex min-h-12 items-center rounded-full text-left text-sm"><WiggleBorder type="pill" motionEnabled={motionEnabled()} /><div class="pointer-events-none absolute inset-0 z-0 rounded-full bg-white/70" /><select class="absolute inset-0 z-[3] h-full w-full cursor-pointer appearance-none bg-transparent px-5 pr-10 text-black outline-none" value={captureSource()} onChange={(event) => void updateCaptureSource(event.currentTarget.value as CaptureSource)}><option value="microphone">Microphone</option><option value="tab">Browser tab</option></select><Icon name="chevron" class="pointer-events-none absolute right-3 z-[2] size-5" /></label>
         </section>
         <section class="grid grid-cols-2 gap-4">
