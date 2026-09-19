@@ -1,16 +1,16 @@
 # Jetson Xavier deployment
 
 This Compose deployment targets a 32 GB Jetson Xavier on JetPack 5.1 or newer
-(L4T R35.2.1+). GitHub Actions builds and publishes the ARM64 images; the
-Jetson only pulls and runs them. The stack has three services:
+(L4T R35.2.1+). The stack has three services:
 
 - `koko-server`: Koko's public websocket/TTS server on port 6942.
 - `koko-whisper`: GPU ASR on the private Compose network.
 - `koko-phonemize`: CPU-only sea-g2p HTTP service on the private Compose network.
 
-The GPU images are based on `jetson-containers` R35 images. These images carry
-the JetPack-matched CUDA, CTranslate2, and ONNX Runtime builds; do not replace
-their runtime packages with PyPI CUDA wheels.
+`koko-whisper` is built from `ghcr.io/spikevn/faster-whisper:jp5`, which has
+CTranslate2 3.24.0 compiled for Xavier's `sm_72` GPU and Faster-Whisper 1.2.0
+built from source for JetPack 5 Python 3.8. Do not replace its runtime packages
+with PyPI CUDA wheels.
 
 ## Prerequisites
 
@@ -43,12 +43,32 @@ docker compose -f deploy/jetson/docker-compose.yml down
 
 ## Image builds
 
-The workflow `.github/workflows/build-jetson-images.yml` publishes
-`koko-server`, `koko-whisper`, and `koko-phonemize` as `linux/arm64` images to
-GHCR using the `jp5` and `latest` tags. Compose pulls the explicit `jp5` tag.
-The workflow uses GitHub's native ARM64 runner, not QEMU. The GPU images remain
-tied to the Jetson-containers R35 base images and must match the host's L4T R35
-ABI family.
+GitHub Actions publishes the ARM64 `koko-server:jp5` and
+`koko-phonemize:jp5` images from
+`.github/workflows/build-jetson-images.yml`. The CUDA Whisper image is not
+built in GitHub Actions; build it directly on the Xavier as described below.
+
+The reusable `faster-whisper:jp5` base is built in the Jetson-containers
+repository. Rebuild and publish it only when native CTranslate2 or
+Faster-Whisper recipes change; Koko changes rebuild only `koko-whisper`.
+
+Build `koko-whisper` directly on the Xavier. If the base image is private,
+authenticate to GHCR first:
+
+```bash
+docker login ghcr.io
+docker build --pull \
+  --tag ghcr.io/spikevn/koko-whisper:jp5 \
+  --file deploy/jetson/whisper-live.Dockerfile .
+docker compose -f deploy/jetson/docker-compose.yml up -d --no-deps --force-recreate koko-whisper
+```
+
+Confirm that the local image uses the Xavier GPU:
+
+```bash
+docker compose -f deploy/jetson/docker-compose.yml exec koko-whisper \
+  python3 -c 'import ctranslate2; assert ctranslate2.get_cuda_device_count() == 1'
+```
 
 The phonemizer does not use CUDA. Its Python 3.12 ARM64 base is intentional:
 `sea-g2p` requires Python 3.10+, while the JetPack 5 GPU images use Python 3.8.

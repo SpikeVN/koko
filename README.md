@@ -131,6 +131,13 @@ the websocket server, GPU WhisperLive server, and phonemizer are in
 [`deploy/jetson/`](deploy/jetson/README.md). They use Jetson-containers R35
 images and publish only the websocket port.
 
+### AMD64 NVIDIA GPU Docker deployment
+
+For Linux AMD64 machines with NVIDIA GPUs, CUDA 12.6-capable drivers, and
+NVIDIA Container Toolkit, use [`deploy/amd64/`](deploy/amd64/README.md). Its
+Compose stack pulls explicit `amd64` GHCR image tags and publishes only the
+websocket port.
+
 ## Quick facts
 
 - Input to the server: raw mono **PCM16 @ 16 kHz** in ~20 ms binary

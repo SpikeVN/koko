@@ -1,0 +1,6 @@
+# CUDA 12-compatible ONNX Runtime for the Vieneu TTS pipeline.
+onnxruntime-gpu>=1.20,<2
+tokenizers>=0.20,<1
+httpx>=0.28,<1
+tomli>=2,<3
+websockets>=14,<18

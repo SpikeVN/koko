@@ -56,9 +56,10 @@ class Bus:
 
     async def pump(self, stop: "asyncio.Event") -> None:
         """Drain inbound thread-safe queue into regular publish loop."""
+        loop = asyncio.get_running_loop()
         while not stop.is_set():
             try:
-                ev = await asyncio.to_thread(self._inbound.get, timeout=0.2)
+                ev = await loop.run_in_executor(None, self._inbound.get, True, 0.2)
             except queue.Empty:
                 continue
             await self.publish(ev)

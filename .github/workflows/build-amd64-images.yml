@@ -1,0 +1,48 @@
+name: Build AMD64 images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-amd64-images.yml"
+      - "deploy/amd64/**"
+      - "koko/**"
+      - "tools/phonemize_server.py"
+      - "tts_model/voices_v3_turbo.json"
+      - "tts_model/more_voices.json"
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: ghcr.io/spikevn/koko-server
+            dockerfile: deploy/amd64/websocket.Dockerfile
+          - image: ghcr.io/spikevn/koko-whisper
+            dockerfile: deploy/amd64/whisper-live.Dockerfile
+          - image: ghcr.io/spikevn/koko-phonemize
+            dockerfile: deploy/amd64/phonemize.Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          pull: true
+          push: true
+          tags: ${{ matrix.image }}:amd64

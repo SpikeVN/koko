@@ -155,15 +155,16 @@ class WsServer:
 
     async def _stop_local_services(self) -> None:
         children, self._children = self._children, []
+        loop = asyncio.get_running_loop()
         for child in reversed(children):
             if child.poll() is not None:
                 continue
             child.terminate()
             try:
-                await asyncio.to_thread(child.wait, 5)
+                await loop.run_in_executor(None, child.wait, 5)
             except subprocess.TimeoutExpired:
                 child.kill()
-                await asyncio.to_thread(child.wait)
+                await loop.run_in_executor(None, child.wait)
 
     async def _load_models(self) -> None:
         cfg = self.cfg                      # already loaded from config.toml

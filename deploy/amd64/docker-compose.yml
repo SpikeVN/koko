@@ -1,0 +1,70 @@
+name: koko
+
+services:
+  koko-server:
+    container_name: koko-server
+    image: ghcr.io/spikevn/koko-server:amd64
+    platform: linux/amd64
+    runtime: nvidia
+    init: true
+    restart: unless-stopped
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    ports:
+      - "6942:6942"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ../../tts_model/onnx_int8:/app/tts_model/onnx_int8:ro
+      - ../../tts_model/codec:/app/tts_model/codec:ro
+      - ../../tts_model/denoiser.onnx:/app/tts_model/denoiser.onnx:ro
+      - ./config.toml:/app/config.toml:ro
+    depends_on:
+      koko-whisper:
+        condition: service_healthy
+      koko-phonemize:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; socket.create_connection(('127.0.0.1', 6942), 2).close()"]
+      interval: 15s
+      timeout: 3s
+      retries: 8
+      start_period: 90s
+
+  koko-whisper:
+    container_name: koko-whisper
+    image: ghcr.io/spikevn/koko-whisper:amd64
+    platform: linux/amd64
+    runtime: nvidia
+    init: true
+    restart: unless-stopped
+    ipc: host
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      HF_HOME: /models/huggingface
+    volumes:
+      - whisper-models:/models
+      - ./config.toml:/app/config.toml:ro
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; socket.create_connection(('127.0.0.1', 9090), 2).close()"]
+      interval: 15s
+      timeout: 3s
+      retries: 12
+      start_period: 90s
+
+  koko-phonemize:
+    container_name: koko-phonemize
+    image: ghcr.io/spikevn/koko-phonemize:amd64
+    platform: linux/amd64
+    init: true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8788), 2).close()"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  whisper-models:

@@ -1,0 +1,49 @@
+# Runtime configuration for docker-compose.yml. Internal service URLs use the
+# Compose DNS names so `koko-server` does not launch child services itself.
+
+[source]
+sample_rate = 16000
+whisper_chunk_s = 0.25
+
+[asr]
+language = "en"
+auto_detect_language = false
+start_local_services = false
+whisper_live_url = "ws://koko-whisper:9090"
+whisper_live_model = "deepdml/faster-whisper-large-v3-turbo-ct2"
+whisper_live_vad = true
+whisper_live_same_output_threshold = 5
+whisper_live_host = "0.0.0.0"
+whisper_live_port = 9090
+whisper_live_backend = "faster_whisper"
+whisper_live_python = "3.12"
+whisper_live_max_clients = 4
+whisper_live_max_connection_s = 600
+whisper_live_handshake_timeout_s = 120.0
+
+[gate]
+release_words = 8
+gap_reset_s = 1.2
+no_new_words_s = 2.0
+
+[llm]
+# Set this to an OpenAI-compatible LLM address reachable from Compose.
+base_url = "http://host.docker.internal:8000/v1"
+model = "default"
+api_key = "dummy"
+temperature = 0.3
+max_tokens = 256
+context_messages = 3
+
+[tts]
+backend = "vieneu"
+vieneu_voice = "Minh Quân Pro"
+vieneu_model_path = "/app/tts_model"
+vieneu_voices_path = "/app/tts_model/more_voices.json"
+vieneu_threads = 0
+sample_rate = 48000
+greedy = false
+execution_provider = "cuda"
+
+[phonemize]
+url = "http://koko-phonemize:8788/phonemize"
