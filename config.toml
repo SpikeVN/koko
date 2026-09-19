@@ -110,6 +110,8 @@ temperature = 0.3
 max_tokens = 256
 # Number of prior translated sentences included in the system message.
 context_messages = 5
+# Default output language. Clients may override this per session.
+target_language = "tiếng Việt"
 
 [tts]
 # --- Text-to-speech backend ------------------------------------------------

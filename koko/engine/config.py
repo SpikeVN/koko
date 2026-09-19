@@ -56,6 +56,7 @@ class LlmConfig:
     temperature: float = 0.3
     max_tokens: int = 256
     context_messages: int = 5       # prior translated sentences included in the system message
+    target_language: str = "tiếng Việt"
 
 
 @dataclass

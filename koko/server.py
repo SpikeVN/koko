@@ -318,7 +318,7 @@ class WsServer:
             asyncio.create_task(bus.pump(stop), name="bus"),
             asyncio.create_task(gate.run(stop), name="gate"),
             asyncio.create_task(AsrStage(bus, monitor, transcriber).run(stop), name="asr"),
-            asyncio.create_task(llm.run(stop, "tiếng Việt"), name="llm"),
+            asyncio.create_task(llm.run(stop), name="llm"),
             asyncio.create_task(tts.run(stop), name="tts"),
         ]
         for t in tasks:  # stage crashes otherwise vanish unobserved
@@ -348,6 +348,9 @@ class WsServer:
                     auto_detect = ctl.get("asr_auto_detect", cfg.asr.auto_detect_language)
                     if isinstance(auto_detect, bool):
                         cfg.asr.auto_detect_language = auto_detect
+                    target_language = ctl.get("target_language")
+                    if isinstance(target_language, str) and target_language:
+                        llm.set_target_language(target_language)
                     info = self.clients.get(ws)
                     if info is not None:
                         info["language"] = cfg.asr.language
@@ -357,6 +360,7 @@ class WsServer:
                         "tts_voice": getattr(backend, "voice", None),
                         "asr_language": cfg.asr.language,
                         "asr_auto_detect": cfg.asr.auto_detect_language,
+                        "target_language": llm.target_language,
                     })
                 elif ctl.get("type") == "bye":
                     break
@@ -396,6 +400,13 @@ class WsServer:
                     else:
                         cfg.asr.auto_detect_language = enabled
                         await self._ctl(ws, {"type": "asr_auto_detect", "enabled": enabled})
+                elif ctl.get("type") == "target_language":
+                    language = ctl.get("language")
+                    if not isinstance(language, str) or not language:
+                        await self._ctl(ws, {"type": "error", "detail": "target_language requires a language"})
+                    else:
+                        llm.set_target_language(language)
+                        await self._ctl(ws, {"type": "target_language", "language": language})
                 else:
                     await self._ctl(ws, {"type": "error", "detail": "unknown control"})
         finally:

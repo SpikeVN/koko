@@ -68,13 +68,13 @@ def _play(q: "queue.SimpleQueue[np.ndarray]", stop_evt: threading.Event,
         stream.close()
 
 
-async def _amain(url: str, language: str, device, out_device) -> None:
+async def _amain(url: str, language: str, target_language: str, device, out_device) -> None:
     pcm_in: queue.SimpleQueue = queue.SimpleQueue()
     pcm_out: queue.SimpleQueue = queue.SimpleQueue()
     stop_evt = threading.Event()
 
     client = KokoClient(url)
-    await client.connect(language)
+    await client.connect(language, target_language=target_language)
     try:
         capture_t = threading.Thread(target=_capture, args=(pcm_in, stop_evt, device), daemon=True)
         out_rate = [OUT_RATE]
@@ -138,6 +138,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("url", nargs="?", default="ws://127.0.0.1:6942")
     ap.add_argument("--language", default="en")
+    ap.add_argument("--target-language", default="tiếng Việt")
     ap.add_argument("--device", default=None,
                     help="input device: index or substring of the name "
                          "(default: system default)")
@@ -224,11 +225,11 @@ def main() -> None:
     use_ui = not args.no_ui
     if use_ui:
         from .client_ui import run_client_ui
-        run_client_ui(args.url, args.language, device, out_device)
+        run_client_ui(args.url, args.language, args.target_language, device, out_device)
         return
 
     try:
-        asyncio.run(_amain(args.url, args.language, device, out_device))
+        asyncio.run(_amain(args.url, args.language, args.target_language, device, out_device))
     except KeyboardInterrupt:
         print("\nbye")
 

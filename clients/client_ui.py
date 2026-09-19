@@ -39,6 +39,15 @@ ASR_LANGUAGE_OPTIONS = [
     ("Portuguese", "pt"), ("Russian", "ru"), ("Thai", "th"),
     ("Indonesian", "id"), ("Arabic", "ar"), ("Hindi", "hi"),
 ]
+TARGET_LANGUAGE_OPTIONS = [
+    ("Vietnamese", "tiếng Việt"), ("English", "English"),
+    ("Chinese", "Chinese"), ("Japanese", "Japanese"),
+    ("Korean", "Korean"), ("French", "French"),
+    ("German", "German"), ("Spanish", "Spanish"),
+    ("Italian", "Italian"), ("Portuguese", "Portuguese"),
+    ("Russian", "Russian"), ("Thai", "Thai"), ("Indonesian", "Indonesian"),
+    ("Arabic", "Arabic"), ("Hindi", "Hindi"),
+]
 
 log = logging.getLogger("clients.client_ui")
 
@@ -79,7 +88,8 @@ def _resample_to_16k(pcm16_bytes: bytes) -> bytes:
 class ClientUI(tk.Tk):
     """Sun Valley ttk frontend for a single koko client session."""
 
-    def __init__(self, url: str, language: str, device=None, out_device=None):
+    def __init__(self, url: str, language: str, target_language: str = "tiếng Việt",
+                 device=None, out_device=None):
         super().__init__()
         self.title("CTE Intelligence Labs - koko")
         self.geometry("1180x760")
@@ -117,6 +127,7 @@ class ClientUI(tk.Tk):
         self._tts_voice: str | None = None
         self._asr_language = language
         self._asr_auto_detect = False
+        self._target_language = target_language
         self._in_pct = 0
         self._proc_err = ""
         self.pcm_in: queue.SimpleQueue[bytes] = queue.SimpleQueue()
@@ -175,9 +186,10 @@ class ClientUI(tk.Tk):
 
         settings.columnconfigure(0, weight=1)
         self.source_var = self._setting(settings, 0, "Speech source")
-        self.language_var = self._setting(settings, 2, "Whisper language")
-        self.voice_var = self._setting(settings, 4, "VieNeu voice")
-        self.output_var = self._setting(settings, 6, "Audio output")
+        self.language_var = self._setting(settings, 2, "Speech source language")
+        self.target_language_var = self._setting(settings, 4, "Translation target")
+        self.voice_var = self._setting(settings, 6, "VieNeu voice")
+        self.output_var = self._setting(settings, 8, "Audio output")
         self.source_combo = ttk.Combobox(settings, textvariable=self.source_var, state="readonly")
         self.source_combo.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         self.language_combo = ttk.Combobox(
@@ -190,31 +202,36 @@ class ClientUI(tk.Tk):
             command=self._toggle_auto,
         )
         self.auto_button.grid(row=3, column=1, sticky="ew", padx=(8, 0), pady=(0, 5))
+        self.target_language_combo = ttk.Combobox(
+            settings, textvariable=self.target_language_var, state="readonly",
+            values=[label for label, _ in TARGET_LANGUAGE_OPTIONS])
+        self.target_language_combo.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        self.target_language_combo.bind("<<ComboboxSelected>>", self._target_language_changed)
         self.voice_combo = ttk.Combobox(settings, textvariable=self.voice_var,
                                         state="disabled")
-        self.voice_combo.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        self.voice_combo.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         self.voice_combo.bind("<<ComboboxSelected>>", self._voice_changed)
         self.output_combo = ttk.Combobox(settings, textvariable=self.output_var, state="readonly")
-        self.output_combo.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        self.output_combo.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         self.output_combo.bind("<<ComboboxSelected>>", self._output_changed)
         self.mute_in_button = ttk.Button(settings, text="Mute input",
                                          style="Toggle.TButton", command=self._toggle_input)
-        self.mute_in_button.grid(row=8, column=0, sticky="ew", padx=(0, 4), pady=4)
+        self.mute_in_button.grid(row=10, column=0, sticky="ew", padx=(0, 4), pady=4)
         self.mute_out_button = ttk.Button(settings, text="Mute output",
                                           style="Toggle.TButton", command=self._toggle_output)
-        self.mute_out_button.grid(row=8, column=1, sticky="ew", padx=(4, 0), pady=4)
+        self.mute_out_button.grid(row=10, column=1, sticky="ew", padx=(4, 0), pady=4)
         ttk.Button(settings, text="Clear context", command=self._clear_context).grid(
-            row=9, column=0, columnspan=2, sticky="ew", pady=(8, 4))
+            row=11, column=0, columnspan=2, sticky="ew", pady=(8, 4))
         ttk.Button(settings, text="Reload mic & speakers", command=self._reload_audio).grid(
-            row=10, column=0, columnspan=2, sticky="ew", pady=(4, 4))
+            row=12, column=0, columnspan=2, sticky="ew", pady=(4, 4))
         self.level_var = tk.StringVar(value="Input level  0%")
-        ttk.Label(settings, textvariable=self.level_var).grid(row=11, column=0,
+        ttk.Label(settings, textvariable=self.level_var).grid(row=13, column=0,
                                                               columnspan=2, sticky="w", pady=12)
         self.server_var = tk.StringVar(value="Server stopped")
         self.server_button = ttk.Button(settings, text="Run server",
                                         style="Toggle.TButton",
                                         command=self._toggle_server)
-        self.server_button.grid(row=14, column=0, columnspan=2, sticky="ew")
+        self.server_button.grid(row=16, column=0, columnspan=2, sticky="ew")
         settings.columnconfigure(1, weight=1)
 
         self.footer_var = tk.StringVar(value="Disconnected")
@@ -255,6 +272,7 @@ class ClientUI(tk.Tk):
             self.source_var.set(self._label_for(source, self._source_opts))
             self.output_var.set(self._label_for(output, self._out_opts))
             self._set_language(self.language)
+            self._set_target_language(self._target_language)
             self._source = self._value_to_source(source)
             self._out_dev = self._value_to_out(output)
 
@@ -342,7 +360,8 @@ class ClientUI(tk.Tk):
             client = KokoClient(self.url)
             self._client = client
             try:
-                await client.connect(self._asr_language, auto_detect=self._asr_auto_detect)
+                await client.connect(self._asr_language, auto_detect=self._asr_auto_detect,
+                                     target_language=self._target_language)
                 self._connected = True
                 self._post_ui(self._set_connection, True, "Connected")
                 self._start_audio()
@@ -391,12 +410,16 @@ class ClientUI(tk.Tk):
                 self._set_language(data["asr_language"])
             if "asr_auto_detect" in data:
                 self._set_auto(data["asr_auto_detect"])
+            if data.get("target_language"):
+                self._set_target_language(data["target_language"])
             if "tts_voices" in data:
                 self._set_voices(data["tts_voices"], data.get("tts_voice"))
         elif message.type == "asr_language":
             self._set_language(data.get("language"))
         elif message.type == "asr_auto_detect":
             self._set_auto(data.get("enabled"))
+        elif message.type == "target_language":
+            self._set_target_language(data.get("language"))
         elif message.type == "tts_voice":
             self._tts_voice = data.get("voice")
         elif message.type == "partial":
@@ -441,6 +464,12 @@ class ClientUI(tk.Tk):
         self._asr_language = language
         self._set_auto(False)
         self._run_control(lambda client: client.set_language(language))
+
+    def _target_language_changed(self, _event=None) -> None:
+        label = self.target_language_var.get()
+        language = next((value for name, value in TARGET_LANGUAGE_OPTIONS if name == label), label)
+        self._target_language = language
+        self._run_control(lambda client: client.set_target_language(language))
 
     def _voice_changed(self, _event=None) -> None:
         voice = self.voice_var.get()
@@ -580,6 +609,13 @@ class ClientUI(tk.Tk):
             return
         self._asr_language = language
         self.language_var.set(next((name for name, code in ASR_LANGUAGE_OPTIONS if code == language), language))
+
+    def _set_target_language(self, language) -> None:
+        if not isinstance(language, str):
+            return
+        self._target_language = language
+        self.target_language_var.set(
+            next((name for name, value in TARGET_LANGUAGE_OPTIONS if value == language), language))
 
     def _set_auto(self, enabled) -> None:
         if not isinstance(enabled, bool):
@@ -800,8 +836,9 @@ class ClientUI(tk.Tk):
         self.destroy()
 
 
-def run_client_ui(url: str, language: str, device=None, out_device=None) -> None:
-    app = ClientUI(url, language, device, out_device)
+def run_client_ui(url: str, language: str, target_language: str = "tiếng Việt",
+                  device=None, out_device=None) -> None:
+    app = ClientUI(url, language, target_language, device, out_device)
     try:
         app.mainloop()
     except KeyboardInterrupt:

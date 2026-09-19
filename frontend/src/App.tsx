@@ -31,6 +31,11 @@ const languages = [
   { code: 'ar', label: 'العربية' },
   { code: 'hi', label: 'हिन्दी' },
 ];
+const targetLanguageNames: Record<string, string> = {
+  en: 'English', vi: 'tiếng Việt', zh: 'Chinese', ja: 'Japanese', ko: 'Korean',
+  fr: 'French', de: 'German', es: 'Spanish', it: 'Italian', pt: 'Portuguese',
+  ru: 'Russian', th: 'Thai', id: 'Indonesian', ar: 'Arabic', hi: 'Hindi',
+};
 
 function LoadingScreen() {
   return (
@@ -230,7 +235,11 @@ function App() {
     socket.binaryType = 'arraybuffer';
     connection = new Promise((resolve, reject) => {
       socket!.onopen = () => {
-        send({ type: 'hello', language: sourceLanguage() });
+        send({
+          type: 'hello',
+          language: sourceLanguage(),
+          target_language: targetLanguageNames[targetLanguage()],
+        });
         resolve();
       };
       socket!.onerror = () => {
@@ -304,6 +313,10 @@ function App() {
     if (speakerEnabled() && audioContext?.state === 'suspended') void audioContext.resume();
   };
   const updateSourceLanguage = (language: string) => { setSourceLanguage(language); send({ type: 'asr_language', language }); };
+  const updateTargetLanguage = (language: string) => {
+    setTargetLanguage(language);
+    send({ type: 'target_language', language: targetLanguageNames[language] });
+  };
   const updateVoice = (selected: string) => { setVoice(selected); send({ type: 'tts_voice', voice: selected }); };
   const updateCaptureSource = async (selected: CaptureSource) => {
     const wasRecording = recording();
@@ -388,7 +401,7 @@ function App() {
         <section class="grid grid-cols-[1fr_auto_1fr] items-center gap-3" aria-label="Language switcher">
           <label class="relative flex min-h-12 items-center rounded-full"><WiggleBorder type="pill" motionEnabled={motionEnabled()} /><div class="pointer-events-none absolute inset-0 z-0 rounded-full bg-white/70" /><select class="absolute inset-0 z-[3] h-full w-full cursor-pointer appearance-none bg-transparent px-5 pr-10 text-sm text-black outline-none" value={sourceLanguage()} onChange={(event) => updateSourceLanguage(event.currentTarget.value)}><For each={languages}>{(language) => <option value={language.code}>{language.label}</option>}</For></select><Icon name="chevron" class="pointer-events-none absolute right-3 z-[2] size-5" /></label>
           <Icon name="arrow" class="size-5 shrink-0" />
-          <label class="relative flex min-h-12 items-center rounded-full"><WiggleBorder type="pill" motionEnabled={motionEnabled()} /><div class="pointer-events-none absolute inset-0 z-0 rounded-full bg-white/70" /><select class="absolute inset-0 z-[3] h-full w-full cursor-pointer appearance-none bg-transparent px-5 pr-10 text-sm text-black outline-none" value={targetLanguage()} onChange={(event) => setTargetLanguage(event.currentTarget.value)}><For each={languages}>{(language) => <option value={language.code}>{language.label}</option>}</For></select><Icon name="chevron" class="pointer-events-none absolute right-3 z-[2] size-5" /></label>
+          <label class="relative flex min-h-12 items-center rounded-full"><WiggleBorder type="pill" motionEnabled={motionEnabled()} /><div class="pointer-events-none absolute inset-0 z-0 rounded-full bg-white/70" /><select class="absolute inset-0 z-[3] h-full w-full cursor-pointer appearance-none bg-transparent px-5 pr-10 text-sm text-black outline-none" value={targetLanguage()} onChange={(event) => updateTargetLanguage(event.currentTarget.value)}><For each={languages}>{(language) => <option value={language.code}>{language.label}</option>}</For></select><Icon name="chevron" class="pointer-events-none absolute right-3 z-[2] size-5" /></label>
         </section>
         <section class="flex flex-col gap-4">
           <h2 class="text-sm font-semibold">Phát phiên dịch</h2>

@@ -47,17 +47,16 @@ class LlmStage:
         self._client = httpx.AsyncClient(base_url=self.cfg.base_url, timeout=120)
         self._history: list[dict[str, str]] = []
         self._context_generation = 0
+        self._target_language = self.cfg.target_language
 
-    async def run(
-        self, stop: asyncio.Event, target_language: str = "tiếng Việt"
-    ) -> None:
+    async def run(self, stop: asyncio.Event) -> None:
         q = self.bus.subscribe(Kind.SPEAK)
         while not stop.is_set():
             ev = await _get(q, stop)
             if ev is None:
                 break
             # _stream publishes ASSISTANT_CHUNK events itself as sentences complete
-            await self._stream(ev.turn_id, ev.text, target_language)
+            await self._stream(ev.turn_id, ev.text, self._target_language)
 
     async def _stream(self, turn_id: str, text: str, target_language: str):
         generation = self._context_generation
@@ -152,9 +151,19 @@ class LlmStage:
     async def close(self):
         await self._client.aclose()
 
+    @property
+    def target_language(self) -> str:
+        return self._target_language
+
     def clear_context(self) -> None:
         self._context_generation += 1
         self._history.clear()
+
+    def set_target_language(self, language: str) -> None:
+        """Use a new output language and discard incompatible translation context."""
+        if language != self._target_language:
+            self._target_language = language
+            self.clear_context()
 
 
 def _token_text(data: str) -> str | None:

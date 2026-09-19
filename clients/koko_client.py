@@ -146,6 +146,7 @@ class KokoClient:
         language: str = "en",
         *,
         auto_detect: bool = False,
+        target_language: str = "tiếng Việt",
     ) -> None:
         """Connect and send the initial ``hello`` control frame.
 
@@ -154,6 +155,7 @@ class KokoClient:
                 ``"en"`` or ``"vi"``.
             auto_detect: Whether the server should enable Whisper language
                 auto-detection for this session.
+            target_language: Language into which the LLM translates speech.
 
         Raises:
             RuntimeError: If this instance is already connected.
@@ -171,6 +173,7 @@ class KokoClient:
                 "type": "hello",
                 "language": language,
                 "asr_auto_detect": auto_detect,
+                "target_language": target_language,
             })
         except BaseException:
             await self.close()
@@ -220,6 +223,10 @@ class KokoClient:
     async def set_auto_detect(self, enabled: bool) -> None:
         """Enable or disable server-side automatic source-language detection."""
         await self._send_control({"type": "asr_auto_detect", "enabled": enabled})
+
+    async def set_target_language(self, language: str) -> None:
+        """Request a new LLM translation target for the active session."""
+        await self._send_control({"type": "target_language", "language": language})
 
     async def set_voice(self, voice: str) -> None:
         """Request a TTS voice preset by its exact server-provided name."""
