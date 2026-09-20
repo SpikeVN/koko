@@ -33,17 +33,21 @@ model = "Qwen3.6-35B-A3B"
 api_key = "dummy"
 temperature = 0.3
 max_tokens = 256
-context_messages = 5
+context_messages = 3
 
 [tts]
-backend = "vieneu"
-vieneu_voice = "Minh Quân Pro"
-vieneu_model_path = "/app/tts_model"
-vieneu_voices_path = "/app/tts_model/more_voices.json"
-vieneu_threads = 0
+backend = "audiocpp"
 sample_rate = 48000
-greedy = false
-execution_provider = "cuda"
+audiocpp_url = "http://host.docker.internal:8082"
+audiocpp_start_local = false
+audiocpp_model = "vieneu-tts"
+audiocpp_language = "auto"
+audiocpp_temperature = 0.5
+audiocpp_top_p = 0.8
+audiocpp_timeout_s = 60.0
+audiocpp_frames_per_phoneme = 6
+audiocpp_min_tokens = 24
+audiocpp_max_tokens = 192
 
 [phonemize]
 url = "http://koko-phonemize:8788/phonemize"

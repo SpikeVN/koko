@@ -386,8 +386,8 @@ function App() {
 
   const startRecording = async () => {
     try {
-      await connect();
       await playback.resume();
+      await connect();
       inputStream ??= captureSource() === 'microphone'
         ? await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } })
         : await navigator.mediaDevices.getDisplayMedia({ audio: true, video: true });

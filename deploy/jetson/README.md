@@ -108,5 +108,6 @@ uv run koko-server --config deploy/jetson/config.native.toml
 ```
 
 This starts phonemizer and WhisperLive locally, then connects to the systemd-
-managed audio.cpp service on `127.0.0.1:8082`. The service uses the rebuilt
-binary at `/mnt/sdcard/PhuongBase/compiled_apps/audio.cpp/build/xavier-cuda-release/bin/audiocpp_server` and injects the speaker embedding automatically.
+managed audio.cpp service through Docker's host gateway. The service listens on
+port 8082 and uses the rebuilt binary at
+`/mnt/sdcard/PhuongBase/compiled_apps/audio.cpp/build/xavier-cuda-release/bin/audiocpp_server`.

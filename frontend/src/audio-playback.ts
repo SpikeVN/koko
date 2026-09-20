@@ -9,8 +9,10 @@ export class AudioPlayback {
     this.nextTime = 0;
   }
 
-  resume() {
-    return this.context?.state === 'suspended' ? this.context.resume() : Promise.resolve();
+  resume(rate = 48_000) {
+    // Create the context during a user gesture so browser autoplay rules permit output.
+    this.context ??= new AudioContext({ sampleRate: rate });
+    return this.context.state === 'suspended' ? this.context.resume() : Promise.resolve();
   }
 
   close() {
