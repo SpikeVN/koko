@@ -76,3 +76,37 @@ docker compose -f deploy/jetson/docker-compose.yml exec koko-whisper \
 
 The phonemizer does not use CUDA. Its Python 3.12 ARM64 base is intentional:
 `sea-g2p` requires Python 3.10+, while the JetPack 5 GPU images use Python 3.8.
+
+## Native Xavier audio.cpp
+
+Use the native profile when the corrected audio.cpp binary is installed on the
+Xavier SD card. The audio.cpp checkout must contain the v3 Turbo GGUF,
+`sample-speaker.emb.txt`, and `assets/resources/sample.wav` under:
+
+```text
+/mnt/sdcard/PhuongBase/compiled_apps/audio.cpp
+```
+
+Install the Minh Quân Pro embedding, audio.cpp configuration, and systemd unit
+once on the Xavier:
+
+```bash
+sudo install -m 0644 deploy/jetson/minh-quan-pro.emb.txt \
+  /mnt/sdcard/PhuongBase/compiled_apps/audio.cpp/models/VieNeu-TTS-v3-Turbo-GGUF/minh-quan-pro.emb.txt
+sudo install -m 0644 deploy/jetson/audiocpp-vieneu-server.native.json \
+  /mnt/sdcard/PhuongBase/compiled_apps/audio.cpp/audiocpp-vieneu-server.native.json
+sudo install -m 0644 deploy/jetson/audiocpp-vieneu.service \
+  /etc/systemd/system/audiocpp-vieneu.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now audiocpp-vieneu
+```
+
+From the Koko repository root, run:
+
+```bash
+uv run koko-server --config deploy/jetson/config.native.toml
+```
+
+This starts phonemizer and WhisperLive locally, then connects to the systemd-
+managed audio.cpp service on `127.0.0.1:8082`. The service uses the rebuilt
+binary at `/mnt/sdcard/PhuongBase/compiled_apps/audio.cpp/build/xavier-cuda-release/bin/audiocpp_server` and injects the speaker embedding automatically.

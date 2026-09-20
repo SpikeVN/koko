@@ -36,6 +36,29 @@ Stop the stack with:
 docker compose -f deploy/amd64/docker-compose.yml down
 ```
 
+## External audio.cpp TTS
+
+VieNeu GGUF can run as a separate `audio.cpp` CUDA service, allowing Koko to
+remain deployable on hosts without its required CUDA version. Copy
+`audiocpp-vieneu-server.json` into the audio.cpp checkout and install the
+Minh Quân Pro speaker embedding beside the model, so its relative paths resolve:
+
+```bash
+install -m 0644 deploy/amd64/minh-quan-pro.emb.txt \
+  /path/to/audio.cpp/models/VieNeu-TTS-v3-Turbo-GGUF/minh-quan-pro.emb.txt
+install -m 0644 deploy/amd64/audiocpp-vieneu-server.json \
+  /path/to/audio.cpp/audiocpp-vieneu-server.json
+```
+
+Then run:
+
+```bash
+audiocpp_server --config audiocpp-vieneu-server.json --log
+```
+
+Set `[tts].backend = "audiocpp"` and point `[tts].audiocpp_url` at that
+service in the Koko machine's `config.toml`.
+
 ## Images
 
 GitHub Actions publishes `linux/amd64` images to GHCR with explicit `amd64`

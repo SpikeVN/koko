@@ -109,14 +109,14 @@ temperature = 0.3
 # Max tokens per translation turn. ~256 covers a several-word burst fine.
 max_tokens = 256
 # Number of prior translated sentences included in the system message.
-context_messages = 5
+context_messages = 3
 # Default output language. Clients may override this per session.
 target_language = "tiếng Việt"
 
 [tts]
 # --- Text-to-speech backend ------------------------------------------------
-# "vieneu" | "null". Unknown values raise ValueError at startup.
-backend = "vieneu"
+# "vieneu" | "audiocpp" | "null". Unknown values raise ValueError at startup.
+backend = "audiocpp"
 
 # Preset voice name; exact (accented) string from the configured voice file's
 # `presets`. "" = that file's default_voice.
@@ -146,6 +146,26 @@ greedy = false
 # auto = CUDA if the runtime libs load, else CPU. "cuda" fails loudly if CUDA
 # can't load; "cpu" forces CPU.
 execution_provider = "auto"
+
+# audio.cpp is a separate CUDA-capable TTS service. Set backend = "audiocpp"
+# on a Koko host that should send synthesis requests to it. The service owns
+# the GGUF model and its reference voice; Koko only sends phonemized text.
+audiocpp_url = "http://127.0.0.1:8082"
+# Run Server starts/stops audio.cpp when this is true. Set the executable and
+# JSON config for the CUDA host; leave the command empty when managed externally.
+audiocpp_start_local = true
+audiocpp_command = "/home/triph/compiled_apps/audio.cpp/build/linux-cuda-release/bin/audiocpp_server"
+audiocpp_config = "/home/triph/compiled_apps/audio.cpp/audiocpp-vieneu-server.json"
+audiocpp_model = "vieneu-tts"
+audiocpp_language = "auto"
+audiocpp_temperature = 0.5
+audiocpp_top_p = 0.8
+audiocpp_timeout_s = 60.0
+# VieNeu GGUF occasionally misses EOS. `max_tokens` is its generated 12.5 fps
+# audio-frame budget, derived from the number of phoneme units in each sentence.
+audiocpp_frames_per_phoneme = 6
+audiocpp_min_tokens = 24
+audiocpp_max_tokens = 192
 
 [phonemize]
 # --- G2P endpoint (text -> phonemes) ---------------------------------------

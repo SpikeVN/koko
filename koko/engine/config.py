@@ -61,7 +61,7 @@ class LlmConfig:
 
 @dataclass
 class TtsConfig:
-    backend: str = "vieneu"               # "vieneu" | "null"
+    backend: str = "vieneu"               # "vieneu" | "audiocpp" | "null"
     vieneu_voice: str = "Adam"              # preset voice name; "" = built-in default
     vieneu_model_path: str = ""         # empty = repo tts_model/ dir
     vieneu_voices_path: str = ""        # empty = <vieneu_model_path>/voices_v3_turbo.json
@@ -70,6 +70,20 @@ class TtsConfig:
     sample_rate: int = 48000            # VieNeu v3 Turbo emits 48 kHz
     greedy: bool = False                # temperature 0 (deterministic argmax path)
     execution_provider: str = "auto"    # "auto" | "cuda" | "cpu"
+    # audio.cpp runs as a separate service, normally on a CUDA-capable host.
+    audiocpp_url: str = "http://127.0.0.1:8082"
+    audiocpp_start_local: bool = True
+    audiocpp_command: str = ""
+    audiocpp_config: str = ""
+    audiocpp_model: str = "vieneu-tts"
+    audiocpp_language: str = "auto"
+    audiocpp_temperature: float = 0.5
+    audiocpp_top_p: float = 0.8
+    audiocpp_timeout_s: float = 60.0
+    # VieNeu GGUF can miss EOS; bound its 12.5 fps generation by phoneme units.
+    audiocpp_frames_per_phoneme: int = 6
+    audiocpp_min_tokens: int = 24
+    audiocpp_max_tokens: int = 192
 
 
 @dataclass

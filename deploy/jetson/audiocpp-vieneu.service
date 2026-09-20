@@ -1,0 +1,17 @@
+[Unit]
+Description=audio.cpp VieNeu TTS service
+RequiresMountsFor=/mnt/sdcard
+After=local-fs.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=triph
+WorkingDirectory=/mnt/sdcard/PhuongBase/compiled_apps/audio.cpp
+ExecStart=/mnt/sdcard/PhuongBase/compiled_apps/audio.cpp/build/xavier-cuda-release/bin/audiocpp_server --config /mnt/sdcard/PhuongBase/compiled_apps/audio.cpp/audiocpp-vieneu-server.native.json --log
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

@@ -13,6 +13,7 @@ it's falling.
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import queue
 import threading
@@ -20,6 +21,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import httpx
 
 from koko.engine.bus import Bus
 from koko.engine.config import Config
@@ -155,6 +157,57 @@ class VieneuTts(TtsBackend):
 
     async def close(self) -> None:
         await self._phonemizer.close()
+
+
+class AudioCppTts(TtsBackend):
+    """VieNeu synthesis through a separately deployed audio.cpp service."""
+
+    def __init__(self, cfg: Config):
+        from koko.engine.phonemize import Phonemizer
+
+        self._cfg = cfg
+        self._phonemizer = Phonemizer(cfg)
+        self._client = httpx.AsyncClient(
+            base_url=cfg.tts.audiocpp_url.rstrip("/"),
+            timeout=cfg.tts.audiocpp_timeout_s,
+        )
+        self.sample_rate = cfg.tts.sample_rate
+
+    async def load(self) -> None:
+        """Fail startup early when the configured service is unavailable."""
+        response = await self._client.get("/health")
+        response.raise_for_status()
+
+    async def speak(self, text: str) -> np.ndarray:
+        phonemes = await self._phonemizer.run(text)
+        if not phonemes:
+            return np.zeros(0, dtype=np.float32)
+        frame_budget = min(
+            self._cfg.tts.audiocpp_max_tokens,
+            max(
+                self._cfg.tts.audiocpp_min_tokens,
+                len(phonemes.split()) * self._cfg.tts.audiocpp_frames_per_phoneme,
+            ),
+        )
+        response = await self._client.post("/v1/audio/speech", json={
+            "model": self._cfg.tts.audiocpp_model,
+            "input": phonemes,
+            "language": self._cfg.tts.audiocpp_language,
+            "response_format": "wav",
+            "max_tokens": frame_budget,
+            "temperature": self._cfg.tts.audiocpp_temperature,
+            "top_p": self._cfg.tts.audiocpp_top_p,
+        })
+        response.raise_for_status()
+        import soundfile as sf
+
+        wav, self.sample_rate = sf.read(
+            io.BytesIO(response.content), dtype="float32", always_2d=True)
+        return wav.mean(axis=1, dtype=np.float32)
+
+    async def close(self) -> None:
+        await self._phonemizer.close()
+        await self._client.aclose()
 
 
 class TtsStage:

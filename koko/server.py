@@ -40,7 +40,7 @@ from koko.engine.events import Event, Kind
 from koko.engine.gate import InterpretationGate
 from koko.engine.llm import LlmStage
 from koko.engine.monitor import Monitor
-from koko.engine.tts import NullTts, VieneuTts
+from koko.engine.tts import AudioCppTts, NullTts, VieneuTts
 from koko.engine.tts import TtsStage
 
 log = logging.getLogger("koko.ws_server")
@@ -130,6 +130,18 @@ class WsServer:
              [sys.executable, str(root / "whisper_live.py"),
               "--config", self.config_path]),
         ]
+        if self.cfg.tts.backend == "audiocpp" and self.cfg.tts.audiocpp_start_local:
+            if not self.cfg.tts.audiocpp_command:
+                raise RuntimeError(
+                    "[tts].audiocpp_start_local is true but [tts].audiocpp_command is empty")
+            if not self.cfg.tts.audiocpp_config:
+                raise RuntimeError(
+                    "[tts].audiocpp_start_local is true but [tts].audiocpp_config is empty")
+            services.append((
+                "audio.cpp TTS",
+                self.cfg.tts.audiocpp_url,
+                [self.cfg.tts.audiocpp_command, "--config", self.cfg.tts.audiocpp_config, "--log"],
+            ))
         for name, url, command in services:
             endpoint = self._local_endpoint(url)
             if endpoint is None:
@@ -138,7 +150,7 @@ class WsServer:
             if await self._port_ready(host, port):
                 log.info("using existing %s service at %s:%d", name, host, port)
                 continue
-            executable = Path(command[1])
+            executable = Path(command[0])
             if not executable.is_file():
                 raise RuntimeError(
                     f"cannot start local {name} service: {executable} is missing; "
@@ -147,7 +159,12 @@ class WsServer:
             if name == "phonemize":
                 command.extend(["--port", str(port)])
             log.info("starting local %s service", name)
-            child = subprocess.Popen(command, cwd=root)
+            cwd = (
+                Path(self.cfg.tts.audiocpp_config).resolve().parent
+                if name == "audio.cpp TTS"
+                else root
+            )
+            child = subprocess.Popen(command, cwd=cwd)
             self._children.append(child)
             deadline = time.monotonic() + 120
             while time.monotonic() < deadline:
@@ -185,7 +202,7 @@ class WsServer:
             await warmup_transcriber.warmup()
         finally:
             await warmup_transcriber.close()
-        tts_backends = ("vieneu", "null")
+        tts_backends = ("vieneu", "audiocpp", "null")
         if cfg.tts.backend not in tts_backends:
             raise ValueError("unknown tts backend %r; expected one of %s"
                              % (cfg.tts.backend, ", ".join(tts_backends)))
@@ -193,6 +210,9 @@ class WsServer:
             self.backend = VieneuTts(cfg)
             await asyncio.get_running_loop().run_in_executor(None, self.backend.load)
             self.tts_voices = self.backend.list_voices()
+        elif cfg.tts.backend == "audiocpp":
+            self.backend = AudioCppTts(cfg)
+            await self.backend.load()
         else:
             self.backend = NullTts()
         log.info("models ready")

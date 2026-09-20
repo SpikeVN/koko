@@ -25,7 +25,7 @@ from koko.engine.source import MicSource
 from koko.engine.asr import AsrStage, WhisperLiveAsr
 from koko.engine.gate import InterpretationGate
 from koko.engine.llm import LlmStage
-from koko.engine.tts import AudioPlayer, NullTts, TtsStage, VieneuTts
+from koko.engine.tts import AudioCppTts, AudioPlayer, NullTts, TtsStage, VieneuTts
 
 log = logging.getLogger("koko.pipeline")
 
@@ -35,6 +35,8 @@ def build_transcriber_and_backend(cfg: Config):
 
     if cfg.tts.backend == "vieneu":
         backend = VieneuTts(cfg)
+    elif cfg.tts.backend == "audiocpp":
+        backend = AudioCppTts(cfg)
     elif cfg.tts.backend == "null":
         backend = NullTts()
     else:

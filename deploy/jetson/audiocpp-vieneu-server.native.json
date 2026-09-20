@@ -1,0 +1,25 @@
+{
+  "host": "127.0.0.1",
+  "port": 8082,
+  "backend": "cuda",
+  "device": 0,
+  "threads": 1,
+  "lazy_load": false,
+  "max_loaded_models": 1,
+  "models": [
+    {
+      "id": "vieneu-tts",
+      "family": "vietneu_tts",
+      "path": "/mnt/sdcard/PhuongBase/compiled_apps/audio.cpp/models/VieNeu-TTS-v3-Turbo-GGUF/model.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "default_request_options": {
+        "speaker_embedding_file": "/mnt/sdcard/PhuongBase/compiled_apps/audio.cpp/models/VieNeu-TTS-v3-Turbo-GGUF/minh-quan-pro.emb.txt"
+      },
+      "default_voice_preset": {
+        "voice_ref": "/mnt/sdcard/PhuongBase/compiled_apps/audio.cpp/assets/resources/sample.wav",
+        "reference_text": "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you."
+      }
+    }
+  ]
+}
