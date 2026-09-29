@@ -11,8 +11,9 @@ the GPU containers.
 
 GitHub Actions publishes explicit `amd64-cuda11.4` GHCR tags. This keeps the
 CUDA 11.4 dependency explicit. `koko-whisper` pins CTranslate2 3.24.0, the
-final release with CUDA 11/cuDNN 8 support. `koko-server` uses ONNX Runtime
-1.16.3, the corresponding CUDA 11/cuDNN 8 release.
+final release with CUDA 11/cuDNN 8 support, with Faster-Whisper 0.10.1 as its
+matching CUDA 11/Python 3.8 release. `koko-server` uses ONNX Runtime 1.16.3,
+the corresponding CUDA 11/cuDNN 8 release.
 
 ## Start
 

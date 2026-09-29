@@ -16,11 +16,11 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# WhisperLive declares Python >=3.9, although its Faster-Whisper server works
-# with Ubuntu 20.04's Python 3.8. CTranslate2 3.24.0 is the final CUDA 11/cuDNN
-# 8 wheel, so replace WhisperLive's CUDA 12-oriented dependency after install.
-RUN python3 -m pip install --ignore-requires-python whisper-live==0.10.0 \
-    && python3 -m pip install --force-reinstall --no-deps ctranslate2==3.24.0
+# Like the Jetson image, install the package without its CUDA 12/Python 3.9+
+# resolver constraints, then provide an explicit CUDA 11-compatible runtime.
+COPY deploy/amd64-cuda11.4/requirements.whisper-live.txt /tmp/requirements.whisper-live.txt
+RUN python3 -m pip install --ignore-requires-python --no-deps whisper-live==0.10.0 \
+    && python3 -m pip install -r /tmp/requirements.whisper-live.txt
 
 COPY koko ./koko
 
