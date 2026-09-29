@@ -1,10 +1,5 @@
 # WhisperLive 0.10 targets Python 3.9+ and currently resolves CUDA 12 packages.
 # Ubuntu 20.04's Python 3.8 and CUDA 11.4 need this explicit runtime instead.
-# CTranslate2 3.24.0 is the final CUDA 11/cuDNN 8 release; Faster-Whisper 0.10.1
-# is the matching release line that supports both it and Python 3.8.
-ctranslate2==3.24.0
-faster-whisper==0.10.1
-
 # WhisperLive imports these server dependencies even when only the
 # faster-whisper backend is configured.
 torch==2.4.1
@@ -17,9 +12,9 @@ fastapi==0.103.2
 uvicorn==0.23.2
 python-multipart==0.0.6
 websocket-client==1.6.4
-# No CPython 3.8 wheel is available, so the Dockerfile installs FFmpeg headers
-# and pkg-config to build this Faster-Whisper-required version from source.
-av==10.0.0
+# Faster-Whisper 0.10.1 declares av==10.* but that release has no usable
+# Python 3.8/Cython build. This CPython 3.8 wheel is API-compatible.
+av==12.0.0
 huggingface-hub==0.36.2
 tokenizers==0.15.2
 tqdm==4.70.1

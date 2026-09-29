@@ -1,4 +1,4 @@
-FROM nvidia/cuda:11.4.3-cudnn8-runtime-ubuntu20.04
+FROM docker.io/nvidia/cuda:11.4.3-cudnn8-runtime-ubuntu20.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \
@@ -8,15 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
-        libavcodec-dev \
-        libavdevice-dev \
-        libavfilter-dev \
-        libavformat-dev \
-        libavutil-dev \
-        libswresample-dev \
-        libswscale-dev \
         portaudio19-dev \
-        pkg-config \
         python3 \
         python3-dev \
         python3-pip \
@@ -28,6 +20,7 @@ WORKDIR /app
 # resolver constraints, then provide an explicit CUDA 11-compatible runtime.
 COPY deploy/amd64-cuda11.4/requirements.whisper-live.txt /tmp/requirements.whisper-live.txt
 RUN python3 -m pip install --ignore-requires-python --no-deps whisper-live==0.10.0 \
+    && python3 -m pip install --no-deps ctranslate2==3.24.0 faster-whisper==0.10.1 \
     && python3 -m pip install -r /tmp/requirements.whisper-live.txt
 
 COPY koko ./koko

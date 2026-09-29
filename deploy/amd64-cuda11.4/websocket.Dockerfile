@@ -1,4 +1,4 @@
-FROM nvidia/cuda:11.4.3-cudnn8-runtime-ubuntu20.04
+FROM docker.io/nvidia/cuda:11.4.3-cudnn8-runtime-ubuntu20.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \
