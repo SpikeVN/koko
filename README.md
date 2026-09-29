@@ -136,7 +136,8 @@ images and publish only the websocket port.
 For Linux AMD64 machines with NVIDIA GPUs, CUDA 12.6-capable drivers, and
 NVIDIA Container Toolkit, use [`deploy/amd64/`](deploy/amd64/README.md). Its
 Compose stack pulls explicit `amd64` GHCR image tags and publishes only the
-websocket port.
+websocket port. For CUDA 11.4/cuDNN 8 hosts, use the locally buildable
+[`deploy/amd64-cuda11.4/`](deploy/amd64-cuda11.4/README.md) stack instead.
 
 ## Quick facts
 

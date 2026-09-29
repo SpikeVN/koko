@@ -1,0 +1,26 @@
+FROM nvidia/cuda:11.4.3-cudnn8-runtime-ubuntu20.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libsndfile1 \
+        python3 \
+        python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY deploy/amd64-cuda11.4/requirements.websocket.txt /tmp/requirements.txt
+RUN python3 -m pip install -r /tmp/requirements.txt
+
+COPY koko ./koko
+COPY tools/phonemize_server.py ./tools/phonemize_server.py
+COPY tts_model/voices_v3_turbo.json ./tts_model/voices_v3_turbo.json
+COPY tts_model/more_voices.json ./tts_model/more_voices.json
+
+EXPOSE 6942
+CMD ["python3", "-m", "koko.server", "--config", "/app/config.toml"]
