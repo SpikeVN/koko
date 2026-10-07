@@ -139,6 +139,12 @@ Compose stack pulls explicit `amd64` GHCR image tags and publishes only the
 websocket port. For CUDA 11.4/cuDNN 8 hosts, use the locally buildable
 [`deploy/amd64-cuda11.4/`](deploy/amd64-cuda11.4/README.md) stack instead.
 
+### AMD64 CPU-only Docker deployment
+
+For Linux AMD64 hosts without an NVIDIA GPU, use
+[`deploy/amd64-cpu/`](deploy/amd64-cpu/README.md). It runs TTS and Faster-Whisper
+on CPU and does not require CUDA or NVIDIA Container Toolkit.
+
 ## Quick facts
 
 - Input to the server: raw mono **PCM16 @ 16 kHz** in ~20 ms binary
